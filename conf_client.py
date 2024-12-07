@@ -43,7 +43,7 @@ class ConferenceClient:
         self.on_meeting = True
         request = {
             "type": "create_conference",
-            "data": {"conference_id": self.conference_id}
+            "data": {}
         }
         self.send_message(request)
         print(f"Conference {self.conference_id} created. You can now join.")
@@ -56,7 +56,7 @@ class ConferenceClient:
         self.on_meeting = True
         request = {
             "type": "join_conference",
-            "data": {"conference_id": self.conference_id}
+            "data": {}
         }
         self.send_message(request)
         print(f"Joined conference {self.conference_id}")
