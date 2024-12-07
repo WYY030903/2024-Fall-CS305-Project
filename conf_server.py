@@ -1,6 +1,18 @@
 import asyncio
 # from util import *
 import json
+import socket
+
+def get_free_port():
+    """
+    获取一个空闲的端口
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        # 绑定到地址 ('', 0)，让操作系统分配一个空闲端口
+        s.bind(('', 0))
+        # 获取分配的端口号
+        port = s.getsockname()[1]
+        return port
 
 
 class ConferenceServer:
@@ -149,25 +161,18 @@ class ConferenceServer:
         
 
     async def start(self):
-        """
-        Start the ConferenceServer and necessary running tasks to handle clients in this conference.
-        """
         try:
             print(f"Starting ConferenceServer for conference ID: {self.conference_id} on port {self.conf_serve_ports}")
-            self.running = True  # 标记服务器正在运行
-
-            # 启动异步服务器并监听客户端连接
+            self.running = True
             self.server = await asyncio.start_server(self.handle_client, '0.0.0.0', self.conf_serve_ports)
             print(f"ConferenceServer is now listening on port {self.conf_serve_ports}")
 
-            # 启动日志记录任务
-            asyncio.create_task(self.log())
-
-            # 保持服务器运行
             async with self.server:
                 await self.server.serve_forever()
         except Exception as e:
             print(f"Error starting ConferenceServer for conference ID {self.conference_id}: {e}")
+        finally:
+            self.running = False
         
 
 
@@ -181,32 +186,22 @@ class MainServer:
         self.conference_conns = None
         self.conference_servers = {}  # self.conference_servers[conference_id] = ConferenceManager
 
-    def handle_create_conference(self,client_address):
-        """
-        Create a new conference: create and start the corresponding ConferenceServer,
-        and reply necessary info to the client.
-        """
+    async def handle_create_conference(self, client_address):
         try:
-            # 生成唯一会议 ID
             conference_id = f"conf_{len(self.conference_servers) + 1}"
             print(f"Creating conference with ID: {conference_id}")
 
-            # 创建新的 ConferenceServer 实例
             new_conference = ConferenceServer()
             new_conference.conference_id = conference_id
-
-            # 分配端口
-            port = 9000  # 默认为 9000，客户端可以请求特定端口
+            port = get_free_port()
             new_conference.conf_serve_ports = port
 
-            # 将会议服务器存储到主服务器的会议字典中
-            self.conference_servers[conference_id] = (new_conference,client_address)
+            self.conference_servers[conference_id] = (new_conference, client_address)
 
-            # 启动会议服务器
-            new_conference.start()
+            # 启动会议服务器作为异步任务
+            asyncio.create_task(new_conference.start())
             print(f"Conference {conference_id} started on port {port} with the host {client_address}")
 
-            # 返回成功信息
             return {"status": "success", "conference_id": conference_id, "port": port}
         except Exception as e:
             print(f"Failed to create conference: {e}")
@@ -280,8 +275,11 @@ class MainServer:
             # 根据请求类型执行相应的操作
             if request_type == "create_conference":
                 # 创建会议
-                response = self.handle_create_conference(client_address)
-            elif request_type == "show_existed_conferences":
+                response = await self.handle_create_conference(client_address)
+            elif request_type == "join_conference":
+                # 加入会议
+                response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
+            elif request_type == "search_conference":
                 # 加入会议
                 response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
             elif request_type == "quit_conference":
@@ -336,7 +334,7 @@ class MainServer:
             print(f"Failed to start MainServer: {e}")
 
 SERVER_IP="127.0.0.1"
-MAIN_SERVER_PORT=8888
+MAIN_SERVER_PORT=5000
 if __name__ == '__main__':
     server = MainServer(SERVER_IP, MAIN_SERVER_PORT)
     server.start()
