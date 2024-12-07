@@ -5,7 +5,7 @@ import socket
 import json
 import pyaudio
 import cv2
-from util import *
+# from util import *
 
 class ConferenceClient:
     def __init__(self):
@@ -28,7 +28,7 @@ class ConferenceClient:
     def connect_to_server(self):
         """Establish connection to the server."""
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_addr = ('127.0.0.1', 5000)  # Server address is fixed for now
+        self.server_addr = ('10.12.36.251', 5000)  # Server address is fixed for now
         try:
             self.client_socket.connect(self.server_addr)
             print(f"Connected to server at {self.server_addr}")
@@ -40,16 +40,17 @@ class ConferenceClient:
         """
         Create a conference: send create-conference request to server and obtain necessary data.
         """
-        self.conference_id = input("Enter a new conference ID: ")
+        # self.conference_id = input("Enter a new conference ID: ")
         self.on_meeting = True
         request = {
             "type": "create_conference",
-            "data": {"conference_id": self.conference_id}
+            "data": {}
         }
         self.send_message(request)
         response = self.receive_message()
         if response.get('status') == 'success':
             self.server_port = response.get('port')
+            self.conference_id= response.get("conference_id")
             print(f"Conference {self.conference_id} created successfully. Server port: {self.server_port}. You can now join.")
         else:
             print("Failed to create conference.")
