@@ -245,64 +245,66 @@ class MainServer:
         Handle out-meeting (or also in-meeting) requests from clients.
         """
         try:
-            # 获取客户端地址信息（用于调试或日志）
             client_address = writer.get_extra_info('peername')
             print(f"Connected to client {client_address}")
 
-            # 读取客户端请求数据
-            data = await reader.read(1024)
-            if not data:
-                print(f"Client {client_address} disconnected.")
-                return
+            # 标志变量：是否保持连接
+            keep_connection = True
 
-            # 解码收到的数据
-            message = data.decode()
-            print(f"Received from {client_address}: {message}")
+            while keep_connection:
+                # 读取客户端请求数据
+                data = await reader.read(1024)
+                if not data:
+                    print(f"Client {client_address} disconnected.")
+                    break
 
-            # 解析请求数据（假设是 JSON 格式）
+                # 解码收到的数据
+                message = data.decode()
+                print(f"Received from {client_address}: {message}")
 
-            try:
-                request = json.loads(message)
-                request_type = request.get("type")  # 请求类型
-                payload = request.get("data")  # 请求的具体数据
-            except json.JSONDecodeError:
-                print("Invalid data format received.")
-                response = {"status": "error", "message": "Invalid request format."}
+                # 解析请求数据（假设是 JSON 格式）
+                try:
+                    request = json.loads(message)
+                    request_type = request.get("type")  # 请求类型
+                    payload = request.get("data")  # 请求的具体数据
+                except json.JSONDecodeError:
+                    print("Invalid data format received.")
+                    response = {"status": "error", "message": "Invalid request format."}
+                    writer.write(json.dumps(response).encode())
+                    await writer.drain()
+                    continue
+
+                # 根据请求类型执行相应的操作
+                if request_type == "create_conference":
+                    response = await self.handle_create_conference(client_address)
+                elif request_type == "join_conference":
+                    response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
+                elif request_type == "search_conference":
+                    response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
+                elif request_type == "quit_conference":
+                    response = self.handle_quit_conference(payload)
+                elif request_type == "cancel_conference":
+                    # 客户端发送 cancel，断开连接
+                    response = {"status": "success", "message": "Connection closed by client request."}
+                    writer.write(json.dumps(response).encode())
+                    await writer.drain()
+                    keep_connection = False  # 设置标志为 False，退出循环
+                    break
+                else:
+                    response = {"status": "error", "message": f"Unknown request type: {request_type}"}
+
+                # 返回响应给客户端
                 writer.write(json.dumps(response).encode())
                 await writer.drain()
-                return
-
-            # 根据请求类型执行相应的操作
-            if request_type == "create_conference":
-                # 创建会议
-                response = await self.handle_create_conference(client_address)
-            elif request_type == "join_conference":
-                # 加入会议
-                response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
-            elif request_type == "search_conference":
-                # 加入会议
-                response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
-            elif request_type == "quit_conference":
-                # 退出会议
-                response = self.handle_quit_conference(payload)
-            elif request_type == "cancel_conference":
-                # 取消会议
-                response = self.handle_cancel_conference(payload)
-            else:
-                # 未知请求类型
-                response = {"status": "error", "message": f"Unknown request type: {request_type}"}
-
-            # 返回响应给客户端
-            writer.write(json.dumps(response).encode())
-            await writer.drain()
 
         except Exception as e:
             print(f"Error handling client {client_address}: {e}")
         finally:
-            # 关闭客户端连接
+            # 如果连接已经断开，清理资源
+            print(f"Closing connection to client {client_address}.")
             writer.close()
             await writer.wait_closed()
-            print(f"Connection to client {client_address} closed.")
+            print(f"Connection to client {client_address} fully closed.")
 
     def start(self):
         """
@@ -333,7 +335,7 @@ class MainServer:
         except Exception as e:
             print(f"Failed to start MainServer: {e}")
 
-SERVER_IP="127.0.0.1"
+SERVER_IP="10.12.36.251"
 MAIN_SERVER_PORT=5000
 if __name__ == '__main__':
     server = MainServer(SERVER_IP, MAIN_SERVER_PORT)
