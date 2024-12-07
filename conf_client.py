@@ -20,6 +20,7 @@ class ConferenceClient:
         self.recv_data = None
         self.username = None
         self.client_socket = None
+        self.server_port = None
 
     def set_username(self):
         self.username = input("Enter your username: ")
@@ -27,7 +28,7 @@ class ConferenceClient:
     def connect_to_server(self):
         """Establish connection to the server."""
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.server_addr = ('127.0.0.1', 5000)
+        self.server_addr = ('127.0.0.1', 5000)  # Server address is fixed for now
         try:
             self.client_socket.connect(self.server_addr)
             print(f"Connected to server at {self.server_addr}")
@@ -43,10 +44,15 @@ class ConferenceClient:
         self.on_meeting = True
         request = {
             "type": "create_conference",
-            "data": {}
+            "data": {"conference_id": self.conference_id}
         }
         self.send_message(request)
-        print(f"Conference {self.conference_id} created. You can now join.")
+        response = self.receive_message()
+        if response.get('status') == 'success':
+            self.server_port = response.get('port')
+            print(f"Conference {self.conference_id} created successfully. Server port: {self.server_port}. You can now join.")
+        else:
+            print("Failed to create conference.")
 
     def join_conference(self, conference_id):
         """
@@ -56,10 +62,15 @@ class ConferenceClient:
         self.on_meeting = True
         request = {
             "type": "join_conference",
-            "data": {}
+            "data": {"conference_id": self.conference_id}
         }
         self.send_message(request)
-        print(f"Joined conference {self.conference_id}")
+        response = self.receive_message()
+        if response.get('status') == 'success':
+            self.server_port = response.get('port')
+            print(f"Joined conference {self.conference_id}. Server port: {self.server_port}")
+        else:
+            print(f"Failed to join conference {self.conference_id}.")
 
     def quit_conference(self):
         """
@@ -98,6 +109,16 @@ class ConferenceClient:
                 print(f"Sent: {request_json}")
             except Exception as e:
                 print(f"Error sending message: {e}")
+
+    def receive_message(self):
+        """Receive a response message from the server."""
+        if self.client_socket:
+            try:
+                response = self.client_socket.recv(1024)
+                return json.loads(response.decode('utf-8'))
+            except Exception as e:
+                print(f"Error receiving message: {e}")
+                return None
 
     def keep_share(self, data_type, send_conn, capture_function, compress=None, fps_or_frequency=30):
         '''
