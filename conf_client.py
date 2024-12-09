@@ -5,7 +5,7 @@ import socket
 import json
 import pyaudio
 import cv2
-# from util import *
+from util import *
 
 class ConferenceClient:
     def __init__(self):
@@ -21,6 +21,7 @@ class ConferenceClient:
         self.username = None
         self.client_socket = None
         self.server_port = None
+        self.conference_id = None  # 存储 conference_id
 
     def set_username(self):
         self.username = input("Enter your username: ")
@@ -36,48 +37,30 @@ class ConferenceClient:
             print(f"Error connecting to server: {e}")
             self.client_socket = None
 
-    def create_conference(self):
+    def create_or_join_conference(self):
         """
-        Create a conference: send create-conference request to server and obtain necessary data.
+        Request the server for a conference.
+        If there are available conferences, join one; otherwise, create a new conference.
         """
-        # self.conference_id = input("Enter a new conference ID: ")
         self.on_meeting = True
         request = {
-            "type": "create_conference",
-            "data": {}
+            "type": "create_conference",  # 向服务器请求获取或创建会议
+            "data": {}  # 向服务器发送用户名
         }
         self.send_message(request)
         response = self.receive_message()
         if response.get('status') == 'success':
+            self.conference_id = response.get('conference_id')
             self.server_port = response.get('port')
-            self.conference_id= response.get("conference_id")
-            print(f"Conference {self.conference_id} created successfully. Server port: {self.server_port}. You can now join.")
+            print(f"Joined or created conference {self.conference_id}. Server port: {self.server_port}")
         else:
-            print("Failed to create conference.")
-
-    def join_conference(self, conference_id):
-        """
-        Join a conference: send join-conference request with given conference_id.
-        """
-        self.conference_id = conference_id
-        self.on_meeting = True
-        request = {
-            "type": "join_conference",
-            "data": {"conference_id": self.conference_id}
-        }
-        self.send_message(request)
-        response = self.receive_message()
-        if response.get('status') == 'success':
-            self.server_port = response.get('port')
-            print(f"Joined conference {self.conference_id}. Server port: {self.server_port}")
-        else:
-            print(f"Failed to join conference {self.conference_id}.")
+            print("Failed to join or create conference.")
 
     def quit_conference(self):
         """
         Quit your ongoing conference.
         """
-        if self.client_socket:
+        if self.client_socket and self.conference_id:
             request = {
                 "type": "quit_conference",
                 "data": {"conference_id": self.conference_id}
@@ -91,7 +74,7 @@ class ConferenceClient:
         """
         Cancel your ongoing conference (when you are the conference manager).
         """
-        if self.client_socket:
+        if self.client_socket and self.conference_id:
             request = {
                 "type": "cancel_conference",
                 "data": {"conference_id": self.conference_id}
@@ -210,6 +193,9 @@ class ConferenceClient:
             print("Unable to connect to server, exiting.")
             return
 
+        # After connecting, automatically request to join or create a conference
+        self.create_or_join_conference()
+
         while True:
             if not self.on_meeting:
                 status = 'Free'
@@ -222,8 +208,6 @@ class ConferenceClient:
             if len(fields) == 1:
                 if cmd_input in ('?', '？'):
                     print(HELP)
-                elif cmd_input == 'create':
-                    self.create_conference()
                 elif cmd_input == 'quit':
                     self.quit_conference()
                 elif cmd_input == 'cancel':
@@ -231,20 +215,12 @@ class ConferenceClient:
                 else:
                     recognized = False
             elif len(fields) == 2:
-                if fields[0] == 'join':
-                    input_conf_id = fields[1]
-                    if input_conf_id.isdigit():
-                        self.join_conference(input_conf_id)
-                    else:
-                        print('[Warn]: Input conference ID must be in digital form')
-                elif fields[0] == 'switch':
+                if fields[0] == 'switch':
                     data_type = fields[1]
                     if data_type in self.support_data_types:
                         self.share_switch(data_type)
                 else:
                     recognized = False
-            else:
-                recognized = False
 
             if not recognized:
                 print(f'[Warn]: Unrecognized cmd_input {cmd_input}')
