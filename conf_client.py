@@ -3,9 +3,9 @@ import time
 import threading
 import socket
 import json
-import pyaudio
+# import pyaudio
 import cv2
-from util import *
+# from util import *
 
 
 class ConferenceClient:
@@ -87,6 +87,18 @@ class ConferenceClient:
             print(f"Conference {self.conference_id} created successfully. Server port: {self.conf_socket}.")
         else:
             print("Failed to create conference.")
+            
+    async def search_conference(self):
+        """
+        Search existed conferences.
+        """
+        request = {
+            "type": "search_conference",
+            "data": {}
+        }
+        await self.send_message(request, self.client_socket)
+        response = await self.receive_message(self.client_socket)
+        print(response)
 
     async def join_conference(self, conference_id):
         """
@@ -129,6 +141,8 @@ class ConferenceClient:
         self.close_conference()
         self.on_meeting = False
         self.conference_id = None
+        self.status='Free'
+        
         print("Quit successfully")
 
         # if self.client_socket and self.conference_id:
@@ -315,6 +329,8 @@ class ConferenceClient:
                     self.quit_conference()
                 elif cmd_input == 'cancel':
                     await self.cancel_conference()
+                elif cmd_input == 'search':
+                    await self.search_conference()
                 else:
                     recognized = False
             elif len(fields) == 2:
@@ -341,7 +357,8 @@ class ConferenceClient:
             if not recognized:
                 print(f'[Warn]: Unrecognized cmd_input {cmd_input}')
 
-
+SERVER_IP='127.0.0.1'
+MAIN_SERVER_PORT=8888
 if __name__ == '__main__':
     client1 = ConferenceClient()
     asyncio.run(client1.start())

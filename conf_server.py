@@ -1,5 +1,5 @@
 import asyncio
-from util import *
+# from util import *
 import json
 import socket
 
@@ -349,8 +349,14 @@ class MainServer:
                     conference_id = payload.get("conference_id")
                     response = await self.handle_join_conference(conference_id)
                     # response = f"The existed meetings are: {[item[0] for item in self.conference_servers]}"
+                elif request_type == "join_conference":
+                    conference_id = payload.get("conference_id")
+                    response = await self.handle_join_conference(conference_id)
                 elif request_type == "search_conference":
-                    response = f"The existed meetings are: {[item[0] for item in self.conference_servers]}"
+                    if len(self.conference_servers)==0:
+                        response="There is no existed meeting."
+                    else:
+                        response = f"The existed meetings are: {[item for item in self.conference_servers]}"
                 elif request_type == "quit_conference":
                     response = self.handle_quit_conference(payload)
                 elif request_type == "cancel_conference":
@@ -407,7 +413,8 @@ class MainServer:
         except Exception as e:
             print(f"Failed to start MainServer: {e}")
 
-
+SERVER_IP='127.0.0.1'
+MAIN_SERVER_PORT=8888
 if __name__ == '__main__':
     server = MainServer(SERVER_IP, MAIN_SERVER_PORT)
     asyncio.run(server.start())
