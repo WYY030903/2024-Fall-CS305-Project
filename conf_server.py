@@ -1,7 +1,8 @@
 import asyncio
-# from util import *
+from util import *
 import json
 import socket
+
 
 def get_free_port():
     """
@@ -37,8 +38,8 @@ class ConferenceServer:
                 if not data:
                     break  # Client disconnected
                 # Forward the data to other clients
-                for client_writer in self.client_conns: #遍历连接会议的所有客户端
-                    if client_writer is not writer: #排除将数据传回给自己的情况
+                for client_writer in self.client_conns:  #遍历连接会议的所有客户端
+                    if client_writer is not writer:  #排除将数据传回给自己的情况
                         client_writer.write(data)
                         await client_writer.drain()
         except Exception as e:
@@ -52,7 +53,7 @@ class ConferenceServer:
         running task: handle the in-meeting requests or messages from clients
         """
         try:
-        # 获取客户端的地址信息（用于调试或日志）
+            # 获取客户端的地址信息（用于调试或日志）
             client_address = writer.get_extra_info('peername')
             print(f"Connected to client {client_address}")
 
@@ -158,7 +159,6 @@ class ConferenceServer:
             print(f"Conference {self.conference_id} successfully canceled.")
         except Exception as e:
             print(f"Error while canceling conference {self.conference_id}: {e}")
-        
 
     async def start(self):
         try:
@@ -173,7 +173,6 @@ class ConferenceServer:
             print(f"Error starting ConferenceServer for conference ID {self.conference_id}: {e}")
         finally:
             self.running = False
-        
 
 
 class MainServer:
@@ -193,16 +192,26 @@ class MainServer:
 
             new_conference = ConferenceServer()
             new_conference.conference_id = conference_id
-            port = get_free_port()
-            new_conference.conf_serve_ports = port
+            conf_port = get_free_port()
+            new_conference.conf_serve_ports = conf_port
+            text_port = get_free_port()
+            video_port = get_free_port()
+            audio_port = get_free_port()
 
             self.conference_servers[conference_id] = (new_conference, client_address)
 
             # 启动会议服务器作为异步任务
             asyncio.create_task(new_conference.start())
-            print(f"Conference {conference_id} started on port {port} with the host {client_address}")
+            print(f"Conference {conference_id} started on port {conf_port} with the host {client_address}")
 
-            return {"status": "success", "conference_id": conference_id, "port": port}
+            return {
+                "status": "success",
+                "conference_id": conference_id,
+                "conf_port": conf_port,
+                "text_port": text_port,
+                "video_port": video_port,
+                "audio_port": audio_port
+            }
         except Exception as e:
             print(f"Failed to create conference: {e}")
             return {"status": "error", "message": str(e)}
@@ -278,9 +287,9 @@ class MainServer:
                 if request_type == "create_conference":
                     response = await self.handle_create_conference(client_address)
                 elif request_type == "join_conference":
-                    response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
+                    response = f"The existed meetings are: {[item[0] for item in self.conference_servers]}"
                 elif request_type == "search_conference":
-                    response = f"The existed meetings are: {[item[0] for item in conference_servers]}"
+                    response = f"The existed meetings are: {[item[0] for item in self.conference_servers]}"
                 elif request_type == "quit_conference":
                     response = self.handle_quit_conference(payload)
                 elif request_type == "cancel_conference":
@@ -312,7 +321,7 @@ class MainServer:
         """
         try:
             print(f"Starting MainServer on {self.server_ip}:{self.server_port}")
-            
+
             # 创建异步服务器，监听客户端连接
             loop = asyncio.get_event_loop()
             self.main_server = asyncio.start_server(self.request_handler, self.server_ip, self.server_port)
@@ -335,8 +344,7 @@ class MainServer:
         except Exception as e:
             print(f"Failed to start MainServer: {e}")
 
-SERVER_IP="10.12.36.251"
-MAIN_SERVER_PORT=5000
+
 if __name__ == '__main__':
     server = MainServer(SERVER_IP, MAIN_SERVER_PORT)
     server.start()
