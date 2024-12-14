@@ -21,12 +21,13 @@ class ConferenceClient:
 
         self.recv_data = None  # you may need to save received streamed data from other clients in conference
 
+        self.status = 'Free'
         self.username = None
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         self.conf_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.conns['video_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.conns['audio_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.conns['video_socket'] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.conns['audio_socket'] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.text_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
         self.conference_id = None  # 存储 conference_id
@@ -43,27 +44,27 @@ class ConferenceClient:
             print(f"Error connecting to server: {e}")
             self.client_socket = None
 
-    def create_or_join_conference(self):
-        """
-        Request the server for a conference.
-        If there are available conferences, join one; otherwise, create a new conference.
-        """
-        self.on_meeting = True
-        request = {
-            "type": "create_conference",  # 向服务器请求获取或创建会议
-            "data": {}  # 向服务器发送用户名
-        }
-        self.send_message(request)
-        response = self.receive_message()
-        if response.get('status') == 'success':
-            self.conference_id = response.get('conference_id')
-            conf_port = response.get('port')
-            self.conf_socket.connect((SERVER_IP, conf_port))
-            print(f"Joined or created conference {self.conference_id}. Server port: {self.conf_socket}")
-        else:
-            print("Failed to join or create conference.")
+    # def create_or_join_conference(self):
+    #     """
+    #     Request the server for a conference.
+    #     If there are available conferences, join one; otherwise, create a new conference.
+    #     """
+    #     self.on_meeting = True
+    #     request = {
+    #         "type": "create_conference",  # 向服务器请求获取或创建会议
+    #         "data": {}  # 向服务器发送用户名
+    #     }
+    #     self.send_message(request, self.client_socket)
+    #     response =  self.receive_message(self.client_socket)
+    #     if response.get('status') == 'success':
+    #         self.conference_id = response.get('conference_id')
+    #         conf_port = response.get('port')
+    #         self.conf_socket.connect((SERVER_IP, conf_port))
+    #         print(f"Joined or created conference {self.conference_id}. Server port: {self.conf_socket}")
+    #     else:
+    #         print("Failed to join or create conference.")
 
-    def create_conference(self):
+    async def create_conference(self):
         """
         Create a conference: send create-conference request to server and obtain necessary data.
         """
@@ -71,8 +72,8 @@ class ConferenceClient:
             "type": "create_conference",
             "data": {}
         }
-        self.send_message(request)
-        response = self.receive_message()
+        await self.send_message(request, self.client_socket)
+        response = await self.receive_message(self.client_socket)
         if response.get('status') == 'success':
             self.on_meeting = True
             self.conference_id = response.get("conference_id")
@@ -81,12 +82,13 @@ class ConferenceClient:
             video_port = response.get("video_port")
             audio_port = response.get("audio port")
 
-            self.start_conference(conf_port, text_port, video_port, audio_port)
+            await self.start_conference(conf_port, text_port, video_port, audio_port)
+            self.status = f'OnMeeting-{self.conference_id}, name: {self.username}'
             print(f"Conference {self.conference_id} created successfully. Server port: {self.conf_socket}.")
         else:
             print("Failed to create conference.")
 
-    def join_conference(self, conference_id):
+    async def join_conference(self, conference_id):
         """
         Join a conference: send join-conference request with given conference_id.
         """
@@ -101,11 +103,18 @@ class ConferenceClient:
                 "conference_id": self.conference_id
             }
         }
-        self.send_message(request)
-        response = self.receive_message()
+        await self.send_message(request, self.client_socket)
+        response = await self.receive_message(self.client_socket)
         if response.get('status') == 'success':
             self.on_meeting = True
-            self.conf_socket = response.get('port')
+            self.conference_id = response.get("conference_id")
+            conf_port = response.get('conf_port')
+            text_port = response.get("text_port")
+            video_port = response.get("video_port")
+            audio_port = response.get("audio port")
+
+            await self.start_conference(conf_port, text_port, video_port, audio_port)
+            self.status = f'OnMeeting-{self.conference_id}, name: {self.username}'
             print(f"Joined conference {self.conference_id}. Server port: {self.conf_socket}")
         else:
             print(f"Failed to join conference {self.conference_id}.")
@@ -134,7 +143,7 @@ class ConferenceClient:
         #     self.on_meeting = False
         #     self.conference_id = None
 
-    def cancel_conference(self):
+    async def cancel_conference(self):
         """
         Cancel your ongoing conference (when you are the conference manager).
         """
@@ -143,27 +152,30 @@ class ConferenceClient:
                 "type": "cancel_conference",
                 "data": {"conference_id": self.conference_id}
             }
-            self.send_message(request)
+            await self.send_message(request, self.conf_socket)
             print(f"Cancelling conference {self.conference_id}")
             self.on_meeting = False
             self.conference_id = None
 
-    def send_message(self, request):
+    async def send_message(self, request, socket):
         """Send a request message to the server."""
-        if self.client_socket:
+        if socket:
             try:
                 request_json = json.dumps(request)
-                self.client_socket.send(request_json.encode('utf-8'))
+                socket.send(request_json.encode('utf-8'))
                 print(f"Sent: {request_json}")
             except Exception as e:
                 print(f"Error sending message: {e}")
 
-    def receive_message(self):
+    async def receive_message(self, socket):
         """Receive a response message from the server."""
-        if self.client_socket:
+        if socket:
             try:
-                response = self.client_socket.recv(1024)
+                response = socket.recv(1024)
                 return json.loads(response.decode('utf-8'))
+            except BlockingIOError:  # This is expected for non-blocking sockets when no data is ready
+                await asyncio.sleep(0.1)  # Yield control to other tasks
+                return None
             except Exception as e:
                 print(f"Error receiving message: {e}")
                 return None
@@ -231,20 +243,31 @@ class ConferenceClient:
         # Play audio using pyaudio or any other audio library
         pass
 
-    def start_conference(self, conf_port, text_port, video_port, audio_port):
+    async def start_conference(self, conf_port, text_port, video_port, audio_port):
         '''
         Init conns when create or join a conference with necessary conference_info.
         '''
-        self.conf_socket.connect(conf_port)
+        self.conf_socket.connect((SERVER_IP, conf_port))
         # connect to text port
         self.text_socket.connect((SERVER_IP, text_port))
+        self.text_socket.setblocking(False)
         # connect to video port
-        self.conns['video_socket'].connect((SERVER_IP, video_port))
+        # self.conns['video_socket'].connect((SERVER_IP, video_port))
         # connect to audio port
-        self.conns['audio_socket'].connect((SERVER_IP, audio_port))
+        # self.conns['audio_socket'].connect((SERVER_IP, audio_port))
         self.set_username()
+        async def receive_text_message():
+            while True:
+                try:
+                    message = await self.receive_message(self.text_socket)
+                    if message is not None:
+                        text = message.get('text')
+                        print(text)
+                except Exception as e:
+                    print(f"Error receiving message: {e}")
+        asyncio.create_task(receive_text_message())
 
-    def close_conference(self):
+    async def close_conference(self):
         '''
         Close all conns to servers or other clients and cancel the running tasks.
         '''
@@ -258,7 +281,10 @@ class ConferenceClient:
         # if self.client_socket:
         #     self.client_socket.close()
 
-    def start(self):
+    def read_console_input(self):
+        return input(f'({self.status}) Please enter an operation (enter "?" to help): ').strip().lower()
+
+    async def start(self):
         """
         Execute functions based on the command line input.
         """
@@ -271,36 +297,44 @@ class ConferenceClient:
         # self.create_or_join_conference()
 
         while True:
-            if not self.on_meeting:
-                status = 'Free'
-            else:
-                status = f'OnMeeting-{self.conference_id}'
+            # if not self.on_meeting:
+            #     status = 'Free'
+            # else:
+            #     status = f'OnMeeting-{self.conference_id}'
 
             recognized = True
-            cmd_input = input(f'({status}) Please enter a operation (enter "?" to help): ').strip().lower()
+            cmd_input = await asyncio.to_thread(self.read_console_input)
+            # cmd_input = input(f'({self.status}) Please enter an operation (enter "?" to help): ').strip().lower()
             fields = cmd_input.split(maxsplit=1)
             if len(fields) == 1:
                 if cmd_input in ('?', '？'):
                     print(HELP)
                 elif cmd_input == 'create':
-                    self.create_conference()
+                    await self.create_conference()
                 elif cmd_input == 'quit':
                     self.quit_conference()
                 elif cmd_input == 'cancel':
-                    self.cancel_conference()
+                    await self.cancel_conference()
                 else:
                     recognized = False
             elif len(fields) == 2:
                 if fields[0] == 'join':
                     input_conf_id = fields[1]
-                    if input_conf_id.isdigit():
-                        self.join_conference(input_conf_id)
-                    else:
-                        print('[Warn]: Input conference ID must be in digital form')
+                    await self.join_conference(input_conf_id)
+                    # if input_conf_id.isdigit():
+                    #     await self.join_conference(input_conf_id)
+                    # else:
+                    #     print('[Warn]: Input conference ID must be in digital form')
                 elif fields[0] == 'switch':
                     data_type = fields[1]
                     if data_type in self.support_data_types:
                         self.share_switch(data_type)
+                elif fields[0] == 'message:':
+                    if self.on_meeting:
+                        message = {"text": f'{self.username}: {fields[1]}'}
+                        await self.send_message(message, self.text_socket)
+                    else:
+                        print("Not in any meeting")
                 else:
                     recognized = False
 
@@ -310,4 +344,4 @@ class ConferenceClient:
 
 if __name__ == '__main__':
     client1 = ConferenceClient()
-    client1.start()
+    asyncio.run(client1.start())
