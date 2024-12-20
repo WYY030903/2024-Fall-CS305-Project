@@ -35,6 +35,9 @@ class ConferenceServer:
 
         self.text_readers = set()
         self.text_writers = set()
+        
+        self.video_readers = set()
+        self.video_writers = set()
 
         self.data_types = ['screen', 'camera', 'audio']  # example data types in a video conference
         self.clients_info = None
@@ -150,6 +153,29 @@ class ConferenceServer:
             self.text_writers.remove(writer)
             writer.close()
             # await writer.wait_closed()
+            
+    async def handle_video_client(self, reader, writer):
+        self.video_readers.add(reader)
+        self.video_writers.add(writer)
+        try:
+            while True:
+                # 读取视频数据，假设每次读取 4096 字节的流数据（根据视频流的实际大小调整）
+                data = await reader.read(4096)
+                if not data:
+                    break
+
+                # 将接收到的视频数据广播给其他客户端
+                await self.broadcast_video_data(data, writer)
+        except Exception as e:
+            print(f"Video socket error: {e}")
+        finally:
+            # 清理资源，移除该连接的 reader 和 writer
+            print("clean handle video")
+            self.video_readers.remove(reader)
+            self.video_writers.remove(writer)
+            writer.close()
+            await writer.wait_closed()
+
 
     async def broadcast_data(self, data, sender, data_type):
         if data_type == 'text':
@@ -157,6 +183,7 @@ class ConferenceServer:
                 if writer is not sender:
                     writer.write(data)
                     await writer.drain()
+                    
 
     async def log(self):
         """
@@ -224,10 +251,12 @@ class ConferenceServer:
             conf_server = await asyncio.start_server(self.handle_conf_client, SERVER_IP, self.conf_serve_port)
             self.conf_server = conf_server
             text_server = await asyncio.start_server(self.handle_text_client, SERVER_IP, self.text_serve_port)
+            video_server = await asyncio.start_server(self.handle_video_client, SERVER_IP, self.video_serve_port)
 
             server_tasks = [
                 asyncio.create_task(conf_server.serve_forever()),
-                asyncio.create_task(text_server.serve_forever())
+                asyncio.create_task(text_server.serve_forever()),
+                asyncio.create_task(video_server.serve_forever())
             ]
 
             await asyncio.gather(*server_tasks)

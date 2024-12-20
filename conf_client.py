@@ -295,11 +295,29 @@ class ConferenceClient:
                     break
             else:
                 break
+            
+    async def receive_video_stream(self):
+        while True:
+            if self.on_meeting:
+                try:
+                    # 从视频套接字接收数据
+                    frame = await self.receive_message(self.conns['video_socket'])
+                    if frame is not None:
+                        # 假设帧是图像数据，可以使用 OpenCV 或其他方式处理
+                        # 例如，使用 OpenCV 显示接收到的帧：
+                        cv2.imshow("Received Video", frame)
+                        cv2.waitKey(1)  # Display the frame for a short time
+                except Exception as e:
+                    print(f"Error receiving video: {e}")
+                    break
+            else:
+                break
 
     async def start_conference(self, conf_port, text_port, video_port, audio_port):
         '''
         Init conns when create or join a conference with necessary conference_info.
         '''
+        await asyncio.sleep(1)
         self.conf_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conf_socket.connect((SERVER_IP, conf_port))
         self.conf_socket.setblocking(False)
@@ -308,7 +326,9 @@ class ConferenceClient:
         self.text_socket.connect((SERVER_IP, text_port))
         self.text_socket.setblocking(False)
         # connect to video port
-        # self.conns['video_socket'].connect((SERVER_IP, video_port))
+        self.conns['video_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.conns['video_socket'].connect((SERVER_IP, video_port))
+        self.conns['video_socket'].setblocking(False)
         # connect to audio port
         # self.conns['audio_socket'].connect((SERVER_IP, audio_port))
         self.set_username()
@@ -318,6 +338,7 @@ class ConferenceClient:
 
         task1 = asyncio.create_task(self.receive_conf_message())
         task2 = asyncio.create_task(self.receive_text_message())
+        task_video= asyncio.create_task(self.receive_text_message())
 
         asyncio.gather(task1, task2)
 
@@ -367,6 +388,7 @@ class ConferenceClient:
             cmd_input = await asyncio.to_thread(self.read_console_input)
             # cmd_input = input(f'({self.status}) Please enter an operation (enter "?" to help): ').strip().lower()
             fields = cmd_input.split(maxsplit=1)
+
             if len(fields) == 1:
                 if cmd_input in ('?', '？'):
                     print(HELP)
