@@ -2,6 +2,7 @@ import asyncio
 # from util import *
 import json
 import socket
+import time
 
 
 def get_free_port():
@@ -17,49 +18,60 @@ def get_free_port():
 
 
 class ConferenceServer:
-    def __init__(self, ):
+    def __init__(self, main_server):
+        # the main_server it belongs to
+        self.main_server = main_server
+
+        self.conf_server = None
+        self.running = False
+
         # async server
         self.conference_id = None  # conference_id for distinguish difference conference
         self.conf_serve_port = None
         self.data_serve_ports = {}
 
-        self.text_readers = []
-        self.text_writers = []
+        self.conf_client_readers = set()
+        self.conf_client_writers = set()
+
+        self.text_readers = set()
+        self.text_writers = set()
 
         self.data_types = ['screen', 'camera', 'audio']  # example data types in a video conference
         self.clients_info = None
-        self.client_conns = None
+        # self.client_conns = None
         self.mode = 'Client-Server'  # or 'P2P' if you want to support peer-to-peer conference mode
 
         self.text_serve_port = None
         self.video_serve_port = None
         self.audio_serve_port = None
 
-    async def handle_data(self, reader, writer, data_type):
-        """
-        running task: receive sharing stream data from a client and decide how to forward them to the rest clients
-        从客户端接收数据并将其转发给会议中的其他与会者
-        """
-        try:
-            while True:
-                data = await reader.read(1024)  # Read data from client 从数据流中读取
-                if not data:
-                    break  # Client disconnected
-                # Forward the data to other clients
-                for client_writer in self.client_conns:  #遍历连接会议的所有客户端
-                    if client_writer is not writer:  #排除将数据传回给自己的情况
-                        client_writer.write(data)
-                        await client_writer.drain()
-        except Exception as e:
-            print(f"Error handling data of type {data_type}: {e}")
-        finally:
-            writer.close()
-            await writer.wait_closed()
+    # async def handle_data(self, reader, writer, data_type):
+    #     """
+    #     running task: receive sharing stream data from a client and decide how to forward them to the rest clients
+    #     从客户端接收数据并将其转发给会议中的其他与会者
+    #     """
+    #     try:
+    #         while True:
+    #             data = await reader.read(1024)  # Read data from client 从数据流中读取
+    #             if not data:
+    #                 break  # Client disconnected
+    #             # Forward the data to other clients
+    #             for client_writer in self.client_conns:  #遍历连接会议的所有客户端
+    #                 if client_writer is not writer:  #排除将数据传回给自己的情况
+    #                     client_writer.write(data)
+    #                     await client_writer.drain()
+    #     except Exception as e:
+    #         print(f"Error handling data of type {data_type}: {e}")
+    #     finally:
+    #         writer.close()
+    #         await writer.wait_closed()
 
     async def handle_conf_client(self, reader, writer):
         """
         running task: handle the in-meeting requests or messages from clients
         """
+        self.conf_client_readers.add(reader)
+        self.conf_client_writers.add(writer)
         try:
             # 获取客户端的地址信息（用于调试或日志）
             client_address = writer.get_extra_info('peername')
@@ -74,48 +86,57 @@ class ConferenceServer:
 
                 # 解码收到的数据
                 message = data.decode()
-                print(f"Received from {client_address}: {message}")
-
-                # 解析请求数据（假设是 JSON 格式）需要统一请求数据的格式
-                import json
-                try:
-                    request = json.loads(message)
-                    request_type = request.get("type")  # 请求类型
-                    payload = request.get("data")  # 请求的具体数据
-                except json.JSONDecodeError:
-                    print("Invalid data format received.")
-                    continue
-
-                # 根据请求类型执行相应的操作
-                if request_type == "send_message":
-                    # 转发文本消息
-                    await self.broadcast_message(writer, payload, "text")
-                elif request_type == "send_video":
-                    # 开启视频流的处理
-                    print(f"Starting video stream for {client_address}.")
-                    await self.handle_data(reader, writer, "video")
-                elif request_type == "send_audio":
-                    # 开启音频流的处理
-                    print(f"Starting audio stream for {client_address}.")
-                    await self.handle_data(reader, writer, "audio")
-                elif request_type == "exit":
-                    # 客户端退出会议
-                    print(f"Client {client_address} has exited the meeting.")
-                    break
-                else:
-                    print(f"Unknown request type: {request_type}")
+                if message == 'cancel':
+                    await self.cancel_conference()
+                # print(f"Received from {client_address}: {message}")
+                #
+                # # 解析请求数据（假设是 JSON 格式）需要统一请求数据的格式
+                # import json
+                # try:
+                #     request = json.loads(message)
+                #     request_type = request.get("type")  # 请求类型
+                #     payload = request.get("data")  # 请求的具体数据
+                # except json.JSONDecodeError:
+                #     print("Invalid data format received.")
+                #     continue
+                #
+                # # 根据请求类型执行相应的操作
+                # if request_type == "send_message":
+                #     # 转发文本消息
+                #     await self.broadcast_message(writer, payload, "text")
+                # elif request_type == "send_video":
+                #     # 开启视频流的处理
+                #     print(f"Starting video stream for {client_address}.")
+                #     await self.handle_data(reader, writer, "video")
+                # elif request_type == "send_audio":
+                #     # 开启音频流的处理
+                #     print(f"Starting audio stream for {client_address}.")
+                #     await self.handle_data(reader, writer, "audio")
+                # elif request_type == "exit":
+                #     # 客户端退出会议
+                #     print(f"Client {client_address} has exited the meeting.")
+                #     break
+                # else:
+                #     print(f"Unknown request type: {request_type}")
         except Exception as e:
             print(f"Error handling client {client_address}: {e}")
         finally:
+            self.conf_client_readers.remove(reader)
+            self.conf_client_writers.remove(writer)
             # 清理资源
             writer.close()
-            await writer.wait_closed()
+            # await writer.wait_closed()
+            if len(self.conf_client_readers) == 0:
+                if self.conference_id in self.main_server.conference_servers:
+                    del self.main_server.conference_servers[self.conference_id]
+                self.running = False
+                self.conf_server.close()
+                print("Server is shutting down...")
             print(f"Connection to client {client_address} closed.")
 
     async def handle_text_client(self, reader, writer):
-        if reader not in self.text_readers and writer not in self.text_writers:
-            self.text_readers.append(reader)
-            self.text_writers.append(writer)
+        self.text_readers.add(reader)
+        self.text_writers.add(writer)
         try:
             while True:
                 data = await reader.read(1024)
@@ -128,7 +149,7 @@ class ConferenceServer:
             self.text_readers.remove(reader)
             self.text_writers.remove(writer)
             writer.close()
-            await writer.wait_closed()
+            # await writer.wait_closed()
 
     async def broadcast_data(self, data, sender, data_type):
         if data_type == 'text':
@@ -169,9 +190,10 @@ class ConferenceServer:
         try:
             print(f"Canceling conference {self.conference_id}...")
 
+            cancellation_message = "cancel".encode()
             # 通知所有客户端会议被取消
-            cancellation_message = f"Conference {self.conference_id} has been canceled.".encode()
-            for client_writer in self.client_conns:
+            to_remove = [item for item in self.conf_client_writers]
+            for client_writer in to_remove:
                 try:
                     client_writer.write(cancellation_message)
                     await client_writer.drain()
@@ -181,13 +203,13 @@ class ConferenceServer:
                 except Exception as e:
                     print(f"Failed to disconnect a client: {e}")
 
-            # 清理客户端连接列表
-            self.client_conns = []
-
             # 从服务器的会议列表中移除该会议
-            if self.conference_id in self.conference_servers:
-                del self.conference_servers[self.conference_id]
-                print(f"Conference {self.conference_id} removed from active list.")
+            del self.main_server.conference_servers[self.conference_id]
+
+            if self.conf_server is not None:
+                self.running = False
+                self.conf_server.close()
+                print("Server is shutting down...")
 
             print(f"Conference {self.conference_id} successfully canceled.")
         except Exception as e:
@@ -200,6 +222,7 @@ class ConferenceServer:
             # self.server = await asyncio.start_server(self.handle_conf_client, SERVER_IP, self.conf_serve_port)
 
             conf_server = await asyncio.start_server(self.handle_conf_client, SERVER_IP, self.conf_serve_port)
+            self.conf_server = conf_server
             text_server = await asyncio.start_server(self.handle_text_client, SERVER_IP, self.text_serve_port)
 
             server_tasks = [
@@ -234,7 +257,7 @@ class MainServer:
             conference_id = f"conf_{len(self.conference_servers) + 1}"
             print(f"Creating conference with ID: {conference_id}")
 
-            new_conference = ConferenceServer()
+            new_conference = ConferenceServer(self)
             new_conference.conference_id = conference_id
             conf_port = get_free_port()
             new_conference.conf_serve_port = conf_port
@@ -379,7 +402,7 @@ class MainServer:
             # 如果连接已经断开，清理资源
             print(f"Closing connection to client {client_address}.")
             writer.close()
-            await writer.wait_closed()
+            # await writer.wait_closed()
             print(f"Connection to client {client_address} fully closed.")
 
     async def start(self):
