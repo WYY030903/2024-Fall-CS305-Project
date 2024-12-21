@@ -326,7 +326,8 @@ class MainServer:
                 "conference_id": conference_id,
                 "conf_port": conference_server.conf_serve_port,
                 "text_port": conference_server.text_serve_port,
-                "video_port": conference_server.video_serve_port,
+                "video_send_port": conference_server.video_send_port,
+                "video_recv_port": conference_server.video_recv_port,
                 "audio_port": conference_server.audio_serve_port
             }
         except Exception as e:
@@ -453,7 +454,7 @@ class MainServer:
         except Exception as e:
             print(f"Failed to start MainServer: {e}")
 
-SERVER_IP='127.0.0.1'
+SERVER_IP='10.27.89.235'
 MAIN_SERVER_PORT=8888
 if __name__ == '__main__':
     server = MainServer(SERVER_IP, MAIN_SERVER_PORT)

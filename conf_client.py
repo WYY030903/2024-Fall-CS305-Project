@@ -133,10 +133,11 @@ class ConferenceClient:
             self.conference_id = response.get("conference_id")
             conf_port = response.get('conf_port')
             text_port = response.get("text_port")
-            video_port = response.get("video_port")
+            self.video_send_port = response.get("video_send_port")
+            self.video_recv_port = response.get("video_recv_port")
             audio_port = response.get("audio port")
 
-            await self.start_conference(conf_port, text_port, video_port, audio_port)
+            await self.start_conference(conf_port, text_port, audio_port)
             self.status = f'OnMeeting-{self.conference_id}, name: {self.username}'
             print(f"Joined conference {self.conference_id}. Server port: {self.conf_socket}")
         else:
@@ -444,7 +445,7 @@ class ConferenceClient:
                 print(f'[Warn]: Unrecognized cmd_input {cmd_input}')
 
 
-SERVER_IP = '127.0.0.1'
+SERVER_IP = '10.27.89.235'
 MAIN_SERVER_PORT = 8888
 if __name__ == '__main__':
     client1 = ConferenceClient()
