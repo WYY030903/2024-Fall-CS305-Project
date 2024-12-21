@@ -3,6 +3,7 @@ import asyncio
 import json
 import socket
 import time
+from video_server import VideoServer
 
 
 def get_free_port():
@@ -45,7 +46,8 @@ class ConferenceServer:
         self.mode = 'Client-Server'  # or 'P2P' if you want to support peer-to-peer conference mode
 
         self.text_serve_port = None
-        self.video_serve_port = None
+        self.video_send_port = None
+        self.video_recv_port = None
         self.audio_serve_port = None
 
     # async def handle_data(self, reader, writer, data_type):
@@ -153,34 +155,13 @@ class ConferenceServer:
             self.text_writers.remove(writer)
             writer.close()
             # await writer.wait_closed()
-            
-    async def handle_video_client(self, reader, writer):
-        self.video_readers.add(reader)
-        self.video_writers.add(writer)
-        try:
-            while True:
-                # 读取视频数据，假设每次读取 4096 字节的流数据（根据视频流的实际大小调整）
-                data = await reader.read(4096)
-                if not data:
-                    break
-
-                # 将接收到的视频数据广播给其他客户端
-                await self.broadcast_video_data(data, writer)
-        except Exception as e:
-            print(f"Video socket error: {e}")
-        finally:
-            # 清理资源，移除该连接的 reader 和 writer
-            print("clean handle video")
-            self.video_readers.remove(reader)
-            self.video_writers.remove(writer)
-            writer.close()
-            await writer.wait_closed()
 
 
     async def broadcast_data(self, data, sender, data_type):
+        # 广播文本数据
         if data_type == 'text':
             for writer in self.text_writers:
-                if writer is not sender:
+                if writer is not sender:  # 避免发送给发送者自己
                     writer.write(data)
                     await writer.drain()
                     
@@ -251,12 +232,16 @@ class ConferenceServer:
             conf_server = await asyncio.start_server(self.handle_conf_client, SERVER_IP, self.conf_serve_port)
             self.conf_server = conf_server
             text_server = await asyncio.start_server(self.handle_text_client, SERVER_IP, self.text_serve_port)
-            video_server = await asyncio.start_server(self.handle_video_client, SERVER_IP, self.video_serve_port)
+            print(f"video port are {self.video_send_port,self.video_recv_port}")
+            video_server = VideoServer(SERVER_IP, self.video_send_port, self.video_recv_port)
+            
+            # 调度 video_server.run() 为一个任务
+            video_task = asyncio.create_task(video_server.run())
 
             server_tasks = [
                 asyncio.create_task(conf_server.serve_forever()),
                 asyncio.create_task(text_server.serve_forever()),
-                asyncio.create_task(video_server.serve_forever())
+                video_task,
             ]
 
             await asyncio.gather(*server_tasks)
@@ -292,8 +277,10 @@ class MainServer:
             new_conference.conf_serve_port = conf_port
             text_port = get_free_port()
             new_conference.text_serve_port = text_port
-            video_port = get_free_port()
-            new_conference.video_serve_port = video_port
+            video_send_port=get_free_port()
+            video_recv_port=get_free_port()
+            new_conference.video_send_port = video_send_port
+            new_conference.video_recv_port = video_recv_port
             audio_port = get_free_port()
             new_conference.audio_serve_port = audio_port
 
@@ -308,7 +295,8 @@ class MainServer:
                 "conference_id": conference_id,
                 "conf_port": conf_port,
                 "text_port": text_port,
-                "video_port": video_port,
+                "video_send_port":video_send_port,
+                "video_recv_port":video_recv_port,
                 "audio_port": audio_port
             }
         except Exception as e:

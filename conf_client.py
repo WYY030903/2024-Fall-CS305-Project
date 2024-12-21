@@ -3,8 +3,10 @@ import time
 import threading
 import socket
 import json
+import select
 # import pyaudio
 import cv2
+from video_client import capture_and_send,receive_and_display
 
 
 # from util import *
@@ -19,6 +21,10 @@ class ConferenceClient:
         self.conns = {'video_socket': None, 'audio_socket': None}
         self.support_data_types = ['text', 'audio', 'video']
         self.share_data = {}
+        self.video_running= False
+        self.video_send_port=None
+        self.video_recv_port=None
+        
 
         self.conference_info = None  # you may need to save and update some conference_info regularly
 
@@ -83,10 +89,11 @@ class ConferenceClient:
             self.conference_id = response.get("conference_id")
             conf_port = response.get('conf_port')
             text_port = response.get("text_port")
-            video_port = response.get("video_port")
+            self.video_send_port = response.get("video_send_port")
+            self.video_recv_port = response.get("video_recv_port")
             audio_port = response.get("audio port")
 
-            await self.start_conference(conf_port, text_port, video_port, audio_port)
+            await self.start_conference(conf_port, text_port, audio_port)
             self.status = f'OnMeeting-{self.conference_id}, name: {self.username}'
             print(f"Conference {self.conference_id} created successfully. Server port: {self.conf_socket}.")
         else:
@@ -202,35 +209,28 @@ class ConferenceClient:
                 print(f"Error receiving message: {e}")
                 return None
 
-    def keep_share(self, data_type, send_conn, capture_function, compress=None, fps_or_frequency=30):
+    async def keep_share(self, data_type, send_conn, capture_function, compress=None, fps_or_frequency=30):
         '''
         Running task: keep sharing (capture and send) certain type of data from server or clients (P2P).
         '''
         if data_type == 'video':
-            self.capture_video(send_conn)
+            await self.capture_video(send_conn)  # 注意这里使用 await
         elif data_type == 'audio':
             self.capture_audio(send_conn)
 
-    def share_switch(self, data_type):
+
+    async def share_switch(self, data_type):
         '''
         Switch for sharing certain type of data (screen, camera, audio, etc.)
         '''
+        print(f"video conns {self.conns.get('video_socket')}")
         if data_type == 'video':
-            self.keep_share('video', self.conns.get('video'), capture_function=self.capture_video)
+            if self.video_running:
+                await self.stop_video()
+            else:
+                await self.start_video()
         elif data_type == 'audio':
-            self.keep_share('audio', self.conns.get('audio'), capture_function=self.capture_audio)
-
-    def capture_video(self, send_conn):
-        '''
-        Capture video stream from camera and send it to server or other clients.
-        '''
-        cap = cv2.VideoCapture(0)
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            # Compress if needed
-            send_conn.send(frame)  # Send the frame to server/other clients
+            await self.keep_share('audio', self.conns.get('audio'), capture_function=self.capture_audio)
 
     def capture_audio(self, send_conn):
         '''
@@ -252,13 +252,6 @@ class ConferenceClient:
                 self.show_video(data)
             elif data_type == 'audio':
                 self.play_audio(data)
-
-    def show_video(self, data):
-        """Display the video stream received from the server."""
-        # Assuming 'data' is a frame from the video stream
-        cv2.imshow('Video', data)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
 
     def play_audio(self, data):
         """Play audio received from the server."""
@@ -295,29 +288,12 @@ class ConferenceClient:
                     break
             else:
                 break
-            
-    async def receive_video_stream(self):
-        while True:
-            if self.on_meeting:
-                try:
-                    # 从视频套接字接收数据
-                    frame = await self.receive_message(self.conns['video_socket'])
-                    if frame is not None:
-                        # 假设帧是图像数据，可以使用 OpenCV 或其他方式处理
-                        # 例如，使用 OpenCV 显示接收到的帧：
-                        cv2.imshow("Received Video", frame)
-                        cv2.waitKey(1)  # Display the frame for a short time
-                except Exception as e:
-                    print(f"Error receiving video: {e}")
-                    break
-            else:
-                break
 
-    async def start_conference(self, conf_port, text_port, video_port, audio_port):
+    async def start_conference(self, conf_port, text_port, audio_port):
         '''
         Init conns when create or join a conference with necessary conference_info.
         '''
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.3)
         self.conf_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conf_socket.connect((SERVER_IP, conf_port))
         self.conf_socket.setblocking(False)
@@ -326,9 +302,7 @@ class ConferenceClient:
         self.text_socket.connect((SERVER_IP, text_port))
         self.text_socket.setblocking(False)
         # connect to video port
-        self.conns['video_socket'] = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.conns['video_socket'].connect((SERVER_IP, video_port))
-        self.conns['video_socket'].setblocking(False)
+
         # connect to audio port
         # self.conns['audio_socket'].connect((SERVER_IP, audio_port))
         self.set_username()
@@ -338,7 +312,8 @@ class ConferenceClient:
 
         task1 = asyncio.create_task(self.receive_conf_message())
         task2 = asyncio.create_task(self.receive_text_message())
-        task_video= asyncio.create_task(self.receive_text_message())
+        
+        
 
         asyncio.gather(task1, task2)
 
@@ -365,6 +340,48 @@ class ConferenceClient:
 
     def read_console_input(self):
         return input(f'({self.status}) Please enter an operation (enter "?" to help): ').strip().lower()
+    
+    async def start_video(self):
+        """
+        启动视频功能：发送和接收任务。
+        """
+        if self.video_running:
+            print("Video is already running.")
+            return
+
+        self.video_running = True
+        loop = asyncio.get_running_loop()
+        self.send_task = asyncio.create_task(capture_and_send(loop,SERVER_IP,self.video_send_port))
+        self.receive_task = asyncio.create_task(receive_and_display(loop,self.video_recv_port))
+        print("Video started.")
+
+    async def stop_video(self):
+        """
+        停止视频功能。
+        """
+        if not self.video_running:
+            print("Video is not running.")
+            return
+
+        self.video_running = False
+
+        # 停止发送任务
+        if hasattr(self, 'send_task') and self.send_task:
+            self.send_task.cancel()
+            try:
+                await self.send_task
+            except asyncio.CancelledError:
+                print("Send task cancelled.")
+
+        # 停止接收任务
+        if hasattr(self, 'receive_task') and self.receive_task:
+            self.receive_task.cancel()
+            try:
+                await self.receive_task
+            except asyncio.CancelledError:
+                print("Receive task cancelled.")
+
+        print("Video stopped.")
 
     async def start(self):
         """
@@ -413,7 +430,7 @@ class ConferenceClient:
                 elif fields[0] == 'switch':
                     data_type = fields[1]
                     if data_type in self.support_data_types:
-                        self.share_switch(data_type)
+                        await self.share_switch(data_type)
                 elif fields[0] == 'msg:':
                     if self.on_meeting:
                         message = {"text": f'{self.username}: {fields[1]}'}
