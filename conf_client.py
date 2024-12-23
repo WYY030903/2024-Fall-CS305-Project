@@ -4,12 +4,12 @@ import threading
 import socket
 import json
 import select
-# import pyaudio
+
+from audio_client import *
+from config import *
+import pyaudio
 import cv2
-from video_client import capture_and_send,receive_and_display
-
-
-# from util import *
+from video_client import capture_and_send, receive_and_display
 
 
 class ConferenceClient:
@@ -21,10 +21,12 @@ class ConferenceClient:
         self.conns = {'video_socket': None, 'audio_socket': None}
         self.support_data_types = ['text', 'audio', 'video']
         self.share_data = {}
-        self.video_running= False
-        self.video_send_port=None
-        self.video_recv_port=None
-        
+        self.video_running = False
+        self.audio_running = False
+        self.video_send_port = None
+        self.video_recv_port = None
+        self.audio_send_port = None
+        self.audio_recv_port = None
 
         self.conference_info = None  # you may need to save and update some conference_info regularly
 
@@ -91,9 +93,10 @@ class ConferenceClient:
             text_port = response.get("text_port")
             self.video_send_port = response.get("video_send_port")
             self.video_recv_port = response.get("video_recv_port")
-            audio_port = response.get("audio port")
+            self.audio_send_port = response.get("audio_send_port")
+            self.audio_recv_port = response.get("audio_recv_port")
 
-            await self.start_conference(conf_port, text_port, audio_port)
+            await self.start_conference(conf_port, text_port, self.audio_send_port, self.audio_recv_port)
             self.status = f'OnMeeting-{self.conference_id}, name: {self.username}'
             print(f"Conference {self.conference_id} created successfully. Server port: {self.conf_socket}.")
         else:
@@ -135,9 +138,10 @@ class ConferenceClient:
             text_port = response.get("text_port")
             self.video_send_port = response.get("video_send_port")
             self.video_recv_port = response.get("video_recv_port")
-            audio_port = response.get("audio port")
+            self.audio_send_port = response.get("audio_send_port")
+            self.audio_recv_port = response.get("audio_recv_port")
 
-            await self.start_conference(conf_port, text_port, audio_port)
+            await self.start_conference(conf_port, text_port, self.audio_send_port, self.audio_recv_port)
             self.status = f'OnMeeting-{self.conference_id}, name: {self.username}'
             print(f"Joined conference {self.conference_id}. Server port: {self.conf_socket}")
         else:
@@ -151,7 +155,6 @@ class ConferenceClient:
             print("No ongoing meeting!")
             return
         self.close_conference()
-
         print("Quit successfully")
 
         # if self.client_socket and self.conference_id:
@@ -211,19 +214,18 @@ class ConferenceClient:
                 return None
 
     async def keep_share(self, data_type, send_conn, capture_function, compress=None, fps_or_frequency=30):
-        '''
+        """
         Running task: keep sharing (capture and send) certain type of data from server or clients (P2P).
-        '''
+        """
         if data_type == 'video':
             await self.capture_video(send_conn)  # 注意这里使用 await
         elif data_type == 'audio':
-            self.capture_audio(send_conn)
-
+            await self.capture_audio(send_conn)
 
     async def share_switch(self, data_type):
-        '''
+        """
         Switch for sharing certain type of data (screen, camera, audio, etc.)
-        '''
+        """
         print(f"video conns {self.conns.get('video_socket')}")
         if data_type == 'video':
             if self.video_running:
@@ -231,12 +233,15 @@ class ConferenceClient:
             else:
                 await self.start_video()
         elif data_type == 'audio':
-            await self.keep_share('audio', self.conns.get('audio'), capture_function=self.capture_audio)
+            if self.audio_running:
+                await self.stop_audio()
+            else:
+                await self.start_audio()
 
-    def capture_audio(self, send_conn):
-        '''
+    async def capture_audio(self, send_conn):
+        """
         Capture audio stream and send it to server or other clients.
-        '''
+        """
         audio = pyaudio.PyAudio()
         stream = audio.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
         while True:
@@ -256,8 +261,20 @@ class ConferenceClient:
 
     def play_audio(self, data):
         """Play audio received from the server."""
-        # Play audio using pyaudio or any other audio library
-        pass
+        # 初始化PyAudio
+        p = pyaudio.PyAudio()
+        # 打开一个音频流
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True)
+
+        # 播放音频数据
+        stream.write(data)
+
+        # 音频播放完毕后，关闭流
+        stream.stop_stream()
+        stream.close()
+
+        # 关闭PyAudio
+        p.terminate()
 
     async def receive_conf_message(self):
         while True:
@@ -290,7 +307,7 @@ class ConferenceClient:
             else:
                 break
 
-    async def start_conference(self, conf_port, text_port, audio_port):
+    async def start_conference(self, conf_port, text_port, audio_send_port, audio_recv_port):
         '''
         Init conns when create or join a conference with necessary conference_info.
         '''
@@ -352,8 +369,8 @@ class ConferenceClient:
 
         self.video_running = True
         loop = asyncio.get_running_loop()
-        self.send_task = asyncio.create_task(capture_and_send(loop,SERVER_IP,self.video_send_port))
-        self.receive_task = asyncio.create_task(receive_and_display(loop,self.video_recv_port))
+        self.send_task = asyncio.create_task(capture_and_send(loop, SERVER_IP, self.video_send_port))
+        self.receive_task = asyncio.create_task(receive_and_display(loop, self.video_recv_port))
         print("Video started.")
 
     async def stop_video(self):
@@ -383,6 +400,40 @@ class ConferenceClient:
                 print("Receive task cancelled.")
 
         print("Video stopped.")
+
+    async def start_audio(self):
+        """
+        启动音频功能：发送和接收任务。
+        """
+        if self.audio_running:
+            print("Audio is already running.")
+            return
+
+        self.audio_running = True
+        loop = asyncio.get_running_loop()
+        self.audio_send_task = asyncio.create_task(capture_and_send_audio(loop, SERVER_IP, self.audio_send_port))
+        self.audio_receive_task = asyncio.create_task(receive_and_play_audio(loop, self.audio_recv_port))
+        print("Audio started.")
+
+    async def stop_audio(self):
+        """
+        停止音频功能。
+        """
+        if not self.audio_running:
+            print("Audio is not running.")
+            return
+
+        self.audio_running = False
+
+        # 停止发送任务
+        if hasattr(self, 'audio_send_task') and self.audio_send_task:
+            self.audio_send_task.cancel()
+            try:
+                await self.audio_send_task
+            except asyncio.CancelledError:
+                print("Audio send task cancelled.")
+
+        print("Audio stopped.")
 
     async def start(self):
         """
@@ -445,8 +496,8 @@ class ConferenceClient:
                 print(f'[Warn]: Unrecognized cmd_input {cmd_input}')
 
 
-SERVER_IP = '10.27.89.235'
-MAIN_SERVER_PORT = 8888
+# SERVER_IP = '10.27.89.235'
+# MAIN_SERVER_PORT = 8888
 if __name__ == '__main__':
     client1 = ConferenceClient()
     asyncio.run(client1.start())

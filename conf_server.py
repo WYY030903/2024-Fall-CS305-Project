@@ -1,9 +1,10 @@
 import asyncio
 # from util import *
+from config import *
 import json
 import socket
-import time
 from video_server import VideoServer
+from audio_server import AudioServer
 
 
 def get_free_port():
@@ -36,7 +37,7 @@ class ConferenceServer:
 
         self.text_readers = set()
         self.text_writers = set()
-        
+
         self.video_readers = set()
         self.video_writers = set()
 
@@ -46,9 +47,12 @@ class ConferenceServer:
         self.mode = 'Client-Server'  # or 'P2P' if you want to support peer-to-peer conference mode
 
         self.text_serve_port = None
+
         self.video_send_port = None
         self.video_recv_port = None
-        self.audio_serve_port = None
+
+        self.audio_send_port = None
+        self.audio_recv_port = None
 
     # async def handle_data(self, reader, writer, data_type):
     #     """
@@ -156,7 +160,6 @@ class ConferenceServer:
             writer.close()
             # await writer.wait_closed()
 
-
     async def broadcast_data(self, data, sender, data_type):
         # 广播文本数据
         if data_type == 'text':
@@ -164,7 +167,6 @@ class ConferenceServer:
                 if writer is not sender:  # 避免发送给发送者自己
                     writer.write(data)
                     await writer.drain()
-                    
 
     async def log(self):
         """
@@ -223,33 +225,53 @@ class ConferenceServer:
         except Exception as e:
             print(f"Error while canceling conference {self.conference_id}: {e}")
 
+    async def handle_audio_client(self, reader, writer):
+        try:
+            while True:
+                data = await reader.read(1024)
+                if not data:
+                    break
+                await self.broadcast_data(data, writer, 'audio')
+        except Exception as e:
+            print(f"Audio socket error: {e}")
+        finally:
+            writer.close()
+
     async def start(self):
         try:
             print(f"Starting ConferenceServer for conference ID: {self.conference_id} on port {self.conf_serve_port}")
             self.running = True
-            # self.server = await asyncio.start_server(self.handle_conf_client, SERVER_IP, self.conf_serve_port)
 
+            # 启动会议服务器
             conf_server = await asyncio.start_server(self.handle_conf_client, SERVER_IP, self.conf_serve_port)
             self.conf_server = conf_server
+
+            # 启动文本消息服务器
             text_server = await asyncio.start_server(self.handle_text_client, SERVER_IP, self.text_serve_port)
-            print(f"video port are {self.video_send_port,self.video_recv_port}")
+
+            # 启动视频服务器
+            print(f"Video ports are {self.video_send_port, self.video_recv_port}")
             video_server = VideoServer(SERVER_IP, self.video_send_port, self.video_recv_port)
-            
-            # 调度 video_server.run() 为一个任务
             video_task = asyncio.create_task(video_server.run())
 
+            # 启动音频服务器
+            print(f"Audio ports are {self.audio_send_port, self.audio_recv_port}")
+            audio_server = AudioServer(SERVER_IP, self.audio_send_port, self.audio_recv_port)
+            audio_task = asyncio.create_task(audio_server.run())
+
+            # 启动所有服务器任务
             server_tasks = [
-                asyncio.create_task(conf_server.serve_forever()),
-                asyncio.create_task(text_server.serve_forever()),
-                video_task,
+                asyncio.create_task(conf_server.serve_forever()),  # 会议服务器
+                asyncio.create_task(text_server.serve_forever()),  # 文本消息服务器
+                video_task,  # 视频服务器
+                audio_task,  # 音频服务器
             ]
 
+            # 并行运行所有服务器任务
             await asyncio.gather(*server_tasks)
 
             print(f"ConferenceServer is now listening on port {self.conf_serve_port}")
 
-            # async with self.server:
-            #     await self.server.serve_forever()
         except Exception as e:
             print(f"Error starting ConferenceServer for conference ID {self.conference_id}: {e}")
         finally:
@@ -277,12 +299,14 @@ class MainServer:
             new_conference.conf_serve_port = conf_port
             text_port = get_free_port()
             new_conference.text_serve_port = text_port
-            video_send_port=get_free_port()
-            video_recv_port=get_free_port()
+            video_send_port = get_free_port()
+            video_recv_port = get_free_port()
+            audio_send_port = get_free_port()
+            audio_recv_port = get_free_port()
             new_conference.video_send_port = video_send_port
             new_conference.video_recv_port = video_recv_port
-            audio_port = get_free_port()
-            new_conference.audio_serve_port = audio_port
+            new_conference.audio_send_port = audio_send_port
+            new_conference.audio_recv_port = audio_recv_port
 
             self.conference_servers[conference_id] = new_conference
 
@@ -295,9 +319,10 @@ class MainServer:
                 "conference_id": conference_id,
                 "conf_port": conf_port,
                 "text_port": text_port,
-                "video_send_port":video_send_port,
-                "video_recv_port":video_recv_port,
-                "audio_port": audio_port
+                "video_send_port": video_send_port,
+                "video_recv_port": video_recv_port,
+                "audio_send_port": audio_send_port,
+                "audio_recv_port": audio_recv_port
             }
         except Exception as e:
             print(f"Failed to create conference: {e}")
@@ -328,7 +353,8 @@ class MainServer:
                 "text_port": conference_server.text_serve_port,
                 "video_send_port": conference_server.video_send_port,
                 "video_recv_port": conference_server.video_recv_port,
-                "audio_port": conference_server.audio_serve_port
+                "audio_send_port": conference_server.audio_send_port,
+                "audio_recv_port": conference_server.audio_recv_port
             }
         except Exception as e:
             print(f"Error while joining conference {conference_id}: {e}")
@@ -394,8 +420,8 @@ class MainServer:
                     conference_id = payload.get("conference_id")
                     response = await self.handle_join_conference(conference_id)
                 elif request_type == "search_conference":
-                    if len(self.conference_servers)==0:
-                        response="There is no existed meeting."
+                    if len(self.conference_servers) == 0:
+                        response = "There is no existed meeting."
                     else:
                         response = f"The existed meetings are: {[item for item in self.conference_servers]}"
                 elif request_type == "quit_conference":
@@ -454,8 +480,9 @@ class MainServer:
         except Exception as e:
             print(f"Failed to start MainServer: {e}")
 
-SERVER_IP='10.27.89.235'
-MAIN_SERVER_PORT=8888
+
+# SERVER_IP='10.27.89.235'
+# MAIN_SERVER_PORT=8888
 if __name__ == '__main__':
     server = MainServer(SERVER_IP, MAIN_SERVER_PORT)
     asyncio.run(server.start())
