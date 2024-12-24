@@ -3,7 +3,7 @@ import asyncio
 import struct
 import numpy as np
 
-MAX_UDP_PACKET_SIZE = 1024  # UDP 最大数据包大小
+MAX_UDP_PACKET_SIZE = 4096  # UDP 最大数据包大小
 
 class UDPSenderProtocol:
     def __init__(self, server_ip, server_port, frame_queue):
@@ -49,7 +49,7 @@ async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_ta
                     break
 
                 # 压缩视频帧为 JPEG 格式，降低质量以减少 CPU 负担
-                success, encoded_frame = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 5])
+                success, encoded_frame = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 10])
                 if not success:
                     continue
 
@@ -150,6 +150,7 @@ async def receive_and_display(loop, receive_port):
         # 将帧放入队列
         asyncio.run_coroutine_threadsafe(frame_queue.put(frame), loop)
 
+    p2p_socket = False
     if p2p_socket:
         # P2P 模式下直接使用传入的 socket
         transport, protocol = None, None
@@ -174,6 +175,7 @@ async def receive_and_display(loop, receive_port):
         finally:
             cv2.destroyAllWindows()
 
+    p2p_socket = False
     if p2p_socket:
         # 在 P2P 模式下，直接接收数据
         async def p2p_receive_loop():

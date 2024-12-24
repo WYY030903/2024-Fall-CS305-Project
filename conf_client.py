@@ -28,6 +28,9 @@ class ConferenceClient:
         self.audio_send_port = None
         self.audio_recv_port = None
 
+        self.send_video_task = None
+        self.receive_video_task = None
+
         self.conference_info = None  # you may need to save and update some conference_info regularly
 
         self.recv_data = None  # you may need to save received streamed data from other clients in conference
@@ -351,6 +354,8 @@ class ConferenceClient:
             self.conns['video_socket'].close()
         if self.conns['audio_socket'] is not None:
             self.conns['audio_socket'].close()
+        self.send_video_task.cancel()
+        self.audio_send_task.cancel()
         self.on_meeting = False
         self.is_manager = False
         self.conference_id = None
@@ -373,8 +378,8 @@ class ConferenceClient:
 
         self.video_running = True
         loop = asyncio.get_running_loop()
-        self.send_task = asyncio.create_task(capture_and_send(loop, SERVER_IP, self.video_send_port))
-        self.receive_task = asyncio.create_task(receive_and_display(loop, self.video_recv_port))
+        self.send_video_task = asyncio.create_task(capture_and_send(loop, SERVER_IP, self.video_send_port))
+        self.receive_video_task = asyncio.create_task(receive_and_display(loop, self.video_recv_port))
         print("Video started.")
 
     async def stop_video(self):
@@ -388,18 +393,18 @@ class ConferenceClient:
         self.video_running = False
 
         # 停止发送任务
-        if hasattr(self, 'send_task') and self.send_task:
-            self.send_task.cancel()
+        if hasattr(self, 'send_task') and self.send_video_task:
+            self.send_video_task.cancel()
             try:
-                await self.send_task
+                await self.send_video_task
             except asyncio.CancelledError:
                 print("Send task cancelled.")
 
         # 停止接收任务
-        if hasattr(self, 'receive_task') and self.receive_task:
-            self.receive_task.cancel()
+        if hasattr(self, 'receive_task') and self.receive_video_task:
+            self.receive_video_task.cancel()
             try:
-                await self.receive_task
+                await self.receive_video_task
             except asyncio.CancelledError:
                 print("Receive task cancelled.")
 
