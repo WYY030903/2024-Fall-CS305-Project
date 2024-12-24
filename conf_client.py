@@ -28,8 +28,11 @@ class ConferenceClient:
         self.audio_send_port = None
         self.audio_recv_port = None
 
+        self.receive_text_task = None
         self.send_video_task = None
         self.receive_video_task = None
+        self.audio_send_task = None
+        self.audio_receive_task = None
 
         self.conference_info = None  # you may need to save and update some conference_info regularly
 
@@ -217,7 +220,7 @@ class ConferenceClient:
                 await asyncio.sleep(0.1)  # Yield control to other tasks
                 return None
             except Exception as e:
-                print(f"Error receiving message: {e}")
+                print(f"Error receiving normal message: {e}")
                 return None
 
     async def keep_share(self, data_type, send_conn, capture_function, compress=None, fps_or_frequency=30):
@@ -295,7 +298,7 @@ class ConferenceClient:
                             self.close_conference()
                             print('Conference has been canceled. Quit.')
                 except Exception as e:
-                    print(f"Error receiving message: {e}")
+                    print(f"Error receiving conf message: {e}")
                     break
             else:
                 break
@@ -309,7 +312,7 @@ class ConferenceClient:
                         text = message.get('text')
                         print(text)
                 except Exception as e:
-                    print(f"Error receiving message: {e}")
+                    print(f"Error receiving text message: {e}")
                     break
             else:
                 break
@@ -336,26 +339,33 @@ class ConferenceClient:
         # asyncio.create_task(self.receive_conf_message())
 
         task1 = asyncio.create_task(self.receive_conf_message())
-        task2 = asyncio.create_task(self.receive_text_message())
-        
-        
+        self.receive_text_task = asyncio.create_task(self.receive_text_message())
 
-        asyncio.gather(task1, task2)
-
+        # asyncio.gather(task1, self.receive_text_task)
 
     def close_conference(self):
         '''
         Close all conns to servers or other clients and cancel the running tasks.
         '''
         print(f"Closing all connections for conference {self.conference_id}")
+        self.receive_text_task.cancel()
+
+        if self.send_video_task is not None:
+            self.send_video_task.cancel()
+        if self.receive_video_task is not None:
+            self.receive_video_task.cancel()
+        if self.audio_send_task is not None:
+            self.audio_send_task.cancel()
+        if self.audio_receive_task is not None:
+            self.audio_receive_task.cancel()
+
         self.conf_socket.close()
         self.text_socket.close()
         if self.conns['video_socket'] is not None:
             self.conns['video_socket'].close()
         if self.conns['audio_socket'] is not None:
             self.conns['audio_socket'].close()
-        self.send_video_task.cancel()
-        self.audio_send_task.cancel()
+
         self.on_meeting = False
         self.is_manager = False
         self.conference_id = None
