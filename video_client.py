@@ -25,7 +25,7 @@ class UDPSenderProtocol:
     def connection_lost(self, exc):
         print("UDP sender connection closed")
 
-async def capture_and_send(loop, server_ip, server_port):
+async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_target=None):
     """
     捕获视频帧并通过 UDP 发送到服务器。
     """
@@ -86,7 +86,12 @@ async def capture_and_send(loop, server_ip, server_port):
 
                 # 构建包头：序列号（1-based），总包数
                 header = struct.pack("!HH", sequence_number, total_packets)
-                transport.sendto(header + packet)
+                if p2p_socket and p2p_target:
+                    # 在 P2P 模式下直接发送数据
+                    p2p_socket.sendto(header + packet, p2p_target)
+                else:
+                    # 非 P2P 模式，发送到服务器
+                    transport.sendto(header + packet)
     except Exception as e:
         print(f"Error occurred during video sending: {e}")
     finally:
@@ -145,11 +150,16 @@ async def receive_and_display(loop, receive_port):
         # 将帧放入队列
         asyncio.run_coroutine_threadsafe(frame_queue.put(frame), loop)
 
-    # 创建 UDP 接收端点
-    transport, protocol = await loop.create_datagram_endpoint(
-        lambda: UDPReceiverProtocol(display_frame),
-        local_addr=("0.0.0.0", receive_port)
-    )
+    if p2p_socket:
+        # P2P 模式下直接使用传入的 socket
+        transport, protocol = None, None
+        print("Using P2P socket for receiving video.")
+    else:
+        # 普通模式下创建 UDP 接收端点
+        transport, protocol = await loop.create_datagram_endpoint(
+            lambda: UDPReceiverProtocol(display_frame),
+            local_addr=("0.0.0.0", receive_port)
+        )
 
     async def show_frames():
         try:
@@ -164,9 +174,40 @@ async def receive_and_display(loop, receive_port):
         finally:
             cv2.destroyAllWindows()
 
-    await show_frames()
-    transport.close()
-    print("Stopped receiving video.")
+    if p2p_socket:
+        # 在 P2P 模式下，直接接收数据
+        async def p2p_receive_loop():
+            while True:
+                data, _ = p2p_socket.recvfrom(MAX_UDP_PACKET_SIZE + 4)
+                if len(data) < 4:
+                    continue  # 无效数据包
+
+                header = data[:4]
+                payload = data[4:]
+                sequence_number, total_packets = struct.unpack("!HH", header)
+
+                if total_packets not in protocol.video_buffer:
+                    protocol.video_buffer[total_packets] = {}
+
+                protocol.video_buffer[total_packets][sequence_number] = payload
+
+                if len(protocol.video_buffer[total_packets]) == total_packets:
+                    # 重组完整帧
+                    sorted_payloads = [protocol.video_buffer[total_packets][i] for i in range(1, total_packets + 1)]
+                    frame_data = b"".join(sorted_payloads)
+                    del protocol.video_buffer[total_packets]
+
+                    # 解码并显示帧
+                    frame_array = np.frombuffer(frame_data, dtype=np.uint8)
+                    frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        display_frame(frame)
+
+        await asyncio.gather(show_frames(), p2p_receive_loop())
+    else:
+        await show_frames()
+        transport.close()
+        print("Stopped receiving video.")
 
 # async def main():
 #     server_ip = "10.27.89.235"  # 服务器 IP

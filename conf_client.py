@@ -41,6 +41,10 @@ class ConferenceClient:
 
         self.conference_id = None  # 存储 conference_id
 
+        self.p2p_mode = False  # 标识是否为 P2P 模式
+        self.p2p_socket = None  # 用于 P2P 数据传输的 UDP socket
+        self.p2p_target = None  # P2P 目标的 (IP, Port)
+
     def set_username(self):
         self.username = input("Enter your username: ")
 
@@ -435,6 +439,48 @@ class ConferenceClient:
 
         print("Audio stopped.")
 
+    async def establish_p2p(self, target_id):
+        """
+        Establish a P2P connection with the specified target client.
+        """
+        request = {
+            "type": "p2p_request",
+            "data": {"target_id": target_id}
+        }
+        await self.send_message(request, self.client_socket)
+        response = await self.receive_message(self.client_socket)
+
+        if response.get("status") == "success":
+            target_ip = response["target_ip"]
+            target_port = response["target_port"]
+            print(f"Establishing P2P connection with {target_ip}:{target_port}")
+
+            # 创建 P2P 连接
+            self.p2p_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.p2p_target = (target_ip, target_port)
+            self.p2p_mode = True  # 启用 P2P 模式
+            return True
+        else:
+            print("Failed to establish P2P connection:", response.get("message"))
+            return False
+
+    async def p2p_send(self, data):
+        """
+        Send data to the P2P target.
+        """
+        if self.p2p_socket and self.p2p_target:
+            self.p2p_socket.sendto(data, self.p2p_target)
+
+    def exit_p2p_mode(self):
+        """
+        Exit P2P mode and clean up resources.
+        """
+        if self.p2p_socket:
+            self.p2p_socket.close()
+            self.p2p_socket = None
+        self.p2p_mode = False
+
+
     async def start(self):
         """
         Execute functions based on the command line input.
@@ -489,6 +535,10 @@ class ConferenceClient:
                         await self.send_message(message, self.text_socket)
                     else:
                         print("Not in any meeting")
+
+                elif fields[0] == 'p2p':  # 匹配 "p2p <target_id>" 命令
+                    target_id = fields[1]
+                    await self.establish_p2p(target_id)  # 建立 P2P 连接
                 else:
                     recognized = False
 

@@ -1,4 +1,4 @@
-import asyncio
+    import asyncio
 # from util import *
 from config import *
 import json
@@ -426,6 +426,12 @@ class MainServer:
                         response = f"The existed meetings are: {[item for item in self.conference_servers]}"
                 elif request_type == "quit_conference":
                     response = self.handle_quit_conference(payload)
+
+                elif request_type == "p2p_request":
+                    target_id = payload.get("target_id")
+                    response = await self.handle_p2p_request(client_address, target_id)
+
+
                 elif request_type == "cancel_conference":
                     # 客户端发送 cancel，断开连接
                     response = {"status": "success", "message": "Connection closed by client request."}
@@ -448,6 +454,24 @@ class MainServer:
             writer.close()
             # await writer.wait_closed()
             print(f"Connection to client {client_address} fully closed.")
+
+    async def handle_p2p_request(self, client_address, target_id):
+        """
+        Handle P2P connection request by returning the target client's IP and port.
+        """
+        try:
+            if target_id not in self.clients_info:  # 假设有 self.clients_info 存储所有已连接的客户端信息
+                return {"status": "error", "message": f"Target client {target_id} not found."}
+
+            target_info = self.clients_info[target_id]
+            return {
+                "status": "success",
+                "target_ip": target_info["ip"],
+                "target_port": target_info["port"]
+            }
+        except Exception as e:
+            print(f"Error handling P2P request: {e}")
+            return {"status": "error", "message": str(e)}
 
     async def start(self):
         """
