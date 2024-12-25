@@ -5,11 +5,14 @@ import socket
 import json
 import select
 
+import faulthandler
+faulthandler.enable()
+
 from audio_client import *
 from config import *
-import pyaudio
+# import pyaudio #注释
 import cv2
-from video_client import capture_and_send, receive_and_display
+from video_client import VideoCaptureHandler
 
 
 class ConferenceClient:
@@ -27,6 +30,8 @@ class ConferenceClient:
         self.video_recv_port = None
         self.audio_send_port = None
         self.audio_recv_port = None
+        
+        self.video_handler=None
 
         self.receive_text_task = None
         self.send_video_task = None
@@ -236,12 +241,15 @@ class ConferenceClient:
         """
         Switch for sharing certain type of data (screen, camera, audio, etc.)
         """
-        print(f"video conns {self.conns.get('video_socket')}")
         if data_type == 'video':
-            if self.video_running:
-                await self.stop_video()
+            if self.on_meeting:
+                if self.video_running and self.video_handler:
+                    await self.video_handler.stop_video()
+                    self.video_running=False
+                else:
+                    self.video_handler=await self.start_video()
             else:
-                await self.start_video()
+                print("You are not in meeting!")
         elif data_type == 'audio':
             if self.audio_running:
                 await self.stop_audio()
@@ -387,38 +395,16 @@ class ConferenceClient:
             return
 
         self.video_running = True
+        print(f"video send port is {self.video_send_port}")
+        # 创建 VideoCaptureHandler 实例
         loop = asyncio.get_running_loop()
-        self.send_video_task = asyncio.create_task(capture_and_send(loop, SERVER_IP, self.video_send_port))
-        self.receive_video_task = asyncio.create_task(receive_and_display(loop, self.video_recv_port))
+        video_handler = VideoCaptureHandler(loop, SERVER_IP, self.video_send_port,self.video_recv_port)
+
+        # 启动视频捕获和发送任务（使用 asyncio.create_task）
+        asyncio.create_task(video_handler.start_video())
+
         print("Video started.")
-
-    async def stop_video(self):
-        """
-        停止视频功能。
-        """
-        if not self.video_running:
-            print("Video is not running.")
-            return
-
-        self.video_running = False
-
-        # 停止发送任务
-        if hasattr(self, 'send_task') and self.send_video_task:
-            self.send_video_task.cancel()
-            try:
-                await self.send_video_task
-            except asyncio.CancelledError:
-                print("Send task cancelled.")
-
-        # 停止接收任务
-        if hasattr(self, 'receive_task') and self.receive_video_task:
-            self.receive_video_task.cancel()
-            try:
-                await self.receive_video_task
-            except asyncio.CancelledError:
-                print("Receive task cancelled.")
-
-        print("Video stopped.")
+        return video_handler
 
     async def start_audio(self):
         """

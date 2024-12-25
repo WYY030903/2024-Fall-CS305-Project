@@ -25,6 +25,8 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
         header = data[:4]
         payload = data[4:]
         sequence_number, total_packets = struct.unpack("!HH", header)
+        # print(f"Seq_num is {sequence_number}")
+        # print(f"total pak is {total_packets}")
 
         # 获取或创建该客户端的缓冲区
         client_buffer = self.server.video_buffers[addr].get(total_packets, {})
@@ -46,12 +48,26 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
 
             if frame is not None:
                 self.server.client_frames[addr] = frame
-                print(f"Received complete frame from {addr}")
+                # print(f"Received complete frame from {addr}")
             else:
                 print(f"Failed to decode frame from {addr}")
 
             # 清空该帧的缓冲区
             del self.server.video_buffers[addr][total_packets]
+        # else:
+        #     # 如果是丢包或不完整包
+        #     if addr in self.server.client_frames:
+        #         # 使用上一帧
+        #         last_frame = self.server.client_frames[addr]
+        #         print(f"Frame from {addr} is incomplete. Using the last frame.")
+        #         frame = last_frame
+        #     else:
+        #         # 如果是第一帧，使用一个静态帧（例如黑屏）
+        #         print(f"First frame from {addr} is incomplete. Displaying static frame.")
+        #         frame = np.zeros((480, 640, 3), dtype=np.uint8)  # 黑屏，或可以用其他静态图片替代
+
+        #     # 显示上一帧或黑屏
+        #     self.server.client_frames[addr] = frame
 
 class VideoServer:
     def __init__(self, server_ip, server_port, unicast_port):
@@ -73,12 +89,14 @@ class VideoServer:
         :param client_frames: 每个客户端的最新视频帧，格式为 {client_address: frame}
         :return: 拼接后的帧
         """
-        frames = list(client_frames.values())
+        frames = [frame for frame in client_frames.values() if frame is not None]
+        # frames = list(client_frames.values())
         num_frames = len(frames)
+        # print(num_frames)
 
         if num_frames == 0:
             return None
-
+        
         # 动态计算布局（例如 1xN、2xN 网格）
         grid_size = math.ceil(math.sqrt(num_frames))  # 网格大小，例如 2x2、3x3
         blank_frame = np.zeros((240, 320, 3), dtype=np.uint8)  # 空白帧，固定大小
@@ -106,18 +124,37 @@ class VideoServer:
         """
         定期拼接所有客户端的最新帧，并发送回所有客户端。
         """
+        previous_frames = {}  # 用于保存上一帧的状态
+        loop_count = 0 
+        
         while True:
             await asyncio.sleep(1/20)  # 20 FPS
-
             if not self.client_frames:
+                # print("no client_frames")
                 continue  # 没有可拼接的帧
-
+            
             # 拼接所有客户端的视频帧
             combined_frame = self.get_combined_frame(self.client_frames)
-
             if combined_frame is None:
+                # print("combine frame is None!")
                 continue
+            # 只有每 10 次循环才进行重复帧检查
+            if loop_count % 10 == 0:
+                # 比较当前帧与上一帧是否相同
+                for addr, current_frame in self.client_frames.items():
+                    # 获取上一帧
+                    previous_frame = previous_frames.get(addr)
 
+                    # 如果上一帧存在且与当前帧相同，将当前帧设置为 None
+                    if previous_frame is not None and np.array_equal(previous_frame, current_frame):
+                        print(f"Frame for {addr} is identical to the previous one. Setting to None.")
+                        self.client_frames[addr] = None  # 将当前帧设置为 None
+                    else:
+                        # print("the frame is different")
+                        # 更新上一帧为当前帧
+                        previous_frames[addr] = current_frame
+
+            loop_count+=1
             # 编码拼接后的帧为 JPEG
             success, encoded_frame = cv2.imencode('.jpg', combined_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 50])
             if not success:
@@ -125,9 +162,14 @@ class VideoServer:
                 continue
             frame_bytes = encoded_frame.tobytes()
             total_packets = math.ceil(len(frame_bytes) / MAX_UDP_PACKET_SIZE)
-
-            # 发送拼接后的帧到所有客户端
-            for client_address in self.client_frames.keys():
+            # print("code is here11112222")  
+            # 发送拼接后的帧到所有客户端，跳过帧为 None 的客户端
+            for client_address, frame in self.client_frames.items():
+                # 如果该客户端的帧是 None，跳过该客户端
+                if frame is None:
+                    print(f"Skipping client {client_address} because the frame is None.")
+                    continue
+                # print("code is here11112222")   
                 self.client_addresses.add(client_address)
                 target_address = (client_address[0], self.unicast_port)  # 使用客户端 IP 和接收端口
 
@@ -140,12 +182,24 @@ class VideoServer:
                     # 构建包头：序列号（1-based），总包数
                     header = struct.pack("!HH", seq_num, total_packets)
                     self.unicast_socket.sendto(header + packet_part, target_address)
+            # print("code is here")
+            cv2.imshow("Combined Video server ", combined_frame)
+            
+            # # 发送拼接后的帧到所有客户端
+            # for client_address in self.client_frames.keys():
+            #     self.client_addresses.add(client_address)
+            #     target_address = (client_address[0], self.unicast_port)  # 使用客户端 IP 和接收端口
 
-            # 在服务器端显示拼接后的帧
-            cv2.imshow("Combined Video Stream", combined_frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("Shutting down server...")
-                break
+            #     # 分片发送
+            #     for seq_num in range(1, total_packets + 1):
+            #         start = (seq_num - 1) * MAX_UDP_PACKET_SIZE
+            #         end = start + MAX_UDP_PACKET_SIZE
+            #         packet_part = frame_bytes[start:end]
+
+            #         # 构建包头：序列号（1-based），总包数
+            #         header = struct.pack("!HH", seq_num, total_packets)
+            #         self.unicast_socket.sendto(header + packet_part, target_address)
+
 
     async def run(self):
         loop = asyncio.get_running_loop()
