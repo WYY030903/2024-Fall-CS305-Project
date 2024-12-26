@@ -8,6 +8,7 @@ from collections import defaultdict
 
 MAX_UDP_PACKET_SIZE = 1024  # UDP 最大数据包大小
 
+
 class VideoServerProtocol(asyncio.DatagramProtocol):
     def __init__(self, server):
         self.transport = None
@@ -52,7 +53,7 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
                 print(f"Failed to decode frame from {addr}")
 
             # 清空该帧的缓冲区
-            del self.server.video_buffers[addr][total_packets]
+            del self.server.video_buffers[addr][received_frame_id]
 
 
 class VideoServer:

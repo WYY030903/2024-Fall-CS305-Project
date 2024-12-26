@@ -10,6 +10,7 @@ CHANNELS = 1  # 单声道
 RATE = 16000  # 采样率：16kHz
 CHUNK_SIZE = 1024  # 每次读取的音频块大小
 
+chunk_id = 0
 
 class UDPSenderProtocol:
     def __init__(self, server_ip, server_port, audio_queue):
@@ -31,6 +32,12 @@ class UDPSenderProtocol:
     def connection_lost(self, exc):
         print("UDP sender connection closed")
 
+    def pause_writing(self):
+        print("Flow control: pause writing")
+
+    def resume_writing(self):
+        print("Flow control: resume writing")
+
 
 async def capture_and_send_audio(loop, server_ip, server_port):
     audio_queue = asyncio.Queue()
@@ -43,6 +50,7 @@ async def capture_and_send_audio(loop, server_ip, server_port):
                     input=True,
                     frames_per_buffer=CHUNK_SIZE)
 
+    global chunk_id
     def capture_audio():
         try:
             while True:
@@ -78,8 +86,12 @@ async def capture_and_send_audio(loop, server_ip, server_port):
                 packet_part = audio_data[start:end]
 
                 # 构建包头：序列号（1-based），总包数
-                header = struct.pack("!HH", seq_num, total_packets)
+                header = struct.pack("!HHH", chunk_id, seq_num, total_packets)
                 transport.sendto(header + packet_part)
+
+            chunk_id += 1
+            if chunk_id > 3000:
+                chunk_id = 0
 
     except Exception as e:
         print(f"Error occurred during audio sending: {e}")
@@ -99,23 +111,23 @@ class UDPReceiverProtocol:
         print("Listening for audio...")
 
     def datagram_received(self, data, addr):
-        if len(data) < 4:
+        if len(data) < 6:
             return  # 无效的数据包
 
-        header = data[:4]
-        payload = data[4:]
-        sequence_number, total_packets = struct.unpack("!HH", header)
+        header = data[:6]
+        payload = data[6:]
+        received_chunk_id, sequence_number, total_packets = struct.unpack("!HHH", header)
 
-        if total_packets not in self.audio_buffer:
-            self.audio_buffer[total_packets] = {}
+        if received_chunk_id not in self.audio_buffer:
+            self.audio_buffer[received_chunk_id] = {}
 
-        self.audio_buffer[total_packets][sequence_number] = payload
+        self.audio_buffer[received_chunk_id][sequence_number] = payload
 
-        if len(self.audio_buffer[total_packets]) == total_packets:
+        if len(self.audio_buffer[received_chunk_id]) == total_packets:
             # 重组完整音频数据
-            sorted_payloads = [self.audio_buffer[total_packets][i] for i in range(1, total_packets + 1)]
+            sorted_payloads = [self.audio_buffer[received_chunk_id][i] for i in range(1, total_packets + 1)]
             audio_data = b"".join(sorted_payloads)
-            del self.audio_buffer[total_packets]
+            del self.audio_buffer[received_chunk_id]
 
             # 将音频数据放入队列
             self.audio_queue.put_nowait(audio_data)
@@ -128,41 +140,70 @@ class UDPReceiverProtocol:
 
 
 async def receive_and_play_audio(loop, local_port):
-    audio_queue = asyncio.Queue()
+    audio_player = pyaudio.PyAudio()
+    stream = audio_player.open(format=AUDIO_FORMAT,
+                               channels=CHANNELS,
+                               rate=RATE,
+                               output=True)
 
-    # 创建 UDP 接收端点
-    transport, protocol = await loop.create_datagram_endpoint(
-        lambda: UDPReceiverProtocol(audio_queue),
-        local_addr=("0.0.0.0", local_port)
-    )
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    client_socket.bind(("0.0.0.0", local_port))
 
-    # 初始化 PyAudio 播放音频
-    p = pyaudio.PyAudio()
-    stream = p.open(format=AUDIO_FORMAT,
-                    channels=CHANNELS,
-                    rate=RATE,
-                    output=True,
-                    frames_per_buffer=CHUNK_SIZE)
+    # print("waiting for audio data...")
 
-    async def play_audio():
-        try:
-            while True:
-                audio_data = await audio_queue.get()
-                if audio_data is None:
-                    break
+    try:
+        while True:
+            data, addr = client_socket.recvfrom(4096)
 
-                # 播放接收到的音频数据
-                stream.write(audio_data)
-        finally:
-            stream.stop_stream()
-            stream.close()
-            p.terminate()
+            if not data:
+                continue
 
-    # 播放接收到的音频
-    await play_audio()
+            stream.write(data)
 
-    transport.close()
-    print("Stopped receiving and playing audio.")
+    except KeyboardInterrupt:
+        print("stop receiving audio")
+
+    finally:
+        stream.stop_stream()
+        stream.close()
+        audio_player.terminate()
+        client_socket.close()
+
+    # audio_queue = asyncio.Queue()
+    #
+    # # 创建 UDP 接收端点
+    # transport, protocol = await loop.create_datagram_endpoint(
+    #     lambda: UDPReceiverProtocol(audio_queue),
+    #     local_addr=("0.0.0.0", local_port)
+    # )
+    #
+    # # 初始化 PyAudio 播放音频
+    # p = pyaudio.PyAudio()
+    # stream = p.open(format=AUDIO_FORMAT,
+    #                 channels=CHANNELS,
+    #                 rate=RATE,
+    #                 output=True,
+    #                 frames_per_buffer=CHUNK_SIZE)
+    #
+    # async def play_audio():
+    #     try:
+    #         while True:
+    #             audio_data = await audio_queue.get()
+    #             if audio_data is None:
+    #                 break
+    #
+    #             # 播放接收到的音频数据
+    #             stream.write(audio_data)
+    #     finally:
+    #         stream.stop_stream()
+    #         stream.close()
+    #         p.terminate()
+    #
+    # # 播放接收到的音频
+    # await play_audio()
+    #
+    # transport.close()
+    # print("Stopped receiving and playing audio.")
 
 
 # async def main():
