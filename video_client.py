@@ -95,7 +95,7 @@ async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_ta
                 packet = frame_bytes[start:end]
 
                 # 构建包头：序列号（1-based），总包数, frame_id
-                header = struct.pack("!HH", sequence_number, total_packets, frame_id)
+                header = struct.pack("!HHH", frame_id, sequence_number, total_packets)
                 if p2p_socket and p2p_target:
                     # 在 P2P 模式下直接发送数据
                     p2p_socket.sendto(header + packet, p2p_target)
@@ -128,19 +128,19 @@ class UDPReceiverProtocol:
 
         header = data[:5]
         payload = data[5:]
-        sequence_number, total_packets, received_frame_id = struct.unpack("!HH", header)
+        received_stream_frame_id, sequence_number, total_packets = struct.unpack("!HHH", header)
 
-        if received_frame_id not in self.video_buffer:
-            self.video_buffer[received_frame_id] = {}
+        if received_stream_frame_id not in self.video_buffer:
+            self.video_buffer[received_stream_frame_id] = {}
 
-        self.video_buffer[received_frame_id][sequence_number] = payload
+        self.video_buffer[received_stream_frame_id][sequence_number] = payload
 
         # 检查是否接收到完整帧
-        if len(self.video_buffer[received_frame_id]) == total_packets:
+        if len(self.video_buffer[received_stream_frame_id]) == total_packets:
             # 重组完整帧
-            sorted_payloads = [self.video_buffer[received_frame_id][i] for i in range(1, total_packets + 1)]
+            sorted_payloads = [self.video_buffer[received_stream_frame_id][i] for i in range(1, total_packets + 1)]
             frame_data = b"".join(sorted_payloads)
-            del self.video_buffer[received_frame_id]
+            del self.video_buffer[received_stream_frame_id]
 
             # 解码并显示帧
             frame_array = np.frombuffer(frame_data, dtype=np.uint8)

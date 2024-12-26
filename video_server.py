@@ -25,7 +25,7 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
         # 解析包头
         header = data[:5]
         payload = data[5:]
-        sequence_number, total_packets, received_frame_id = struct.unpack("!HH", header)
+        received_frame_id, sequence_number, total_packets = struct.unpack("!HHH", header)
 
         # 获取或创建该客户端的缓冲区
         client_buffer = self.server.video_buffers[addr].get(received_frame_id, {})
@@ -142,7 +142,7 @@ class VideoServer:
                     packet_part = frame_bytes[start:end]
 
                     # 构建包头：序列号（1-based），总包数
-                    header = struct.pack("!HH", seq_num, total_packets, self.stream_frame_id)
+                    header = struct.pack("!HHH", self.stream_frame_id, seq_num, total_packets)
                     self.unicast_socket.sendto(header + packet_part, target_address)
 
             self.stream_frame_id += 1
