@@ -13,8 +13,35 @@ RATE = 16000
 CHUNK_SIZE = 1024
 
 
+class UDPSenderProtocol:
+    def __init__(self, server_ip, server_port):
+        self.server_ip = server_ip
+        self.server_port = server_port
+        self.transport = None
+
+    def connection_made(self, transport):
+        self.transport = transport
+        print(f"Sending audio to {self.server_ip}:{self.server_port}")
+
+    def datagram_sent(self, data, addr):
+        pass  # 可添加日志或统计数据发送量
+
+    def error_received(self, exc):
+        print(f"Error received: {exc}")
+
+    def connection_lost(self, exc):
+        print("UDP sender connection closed")
+
+    def pause_writing(self):
+        print("Flow control: pause writing")
+
+    def resume_writing(self):
+        print("Flow control: resume writing")
+
+
 class AudioServerProtocol(asyncio.DatagramProtocol):
     def __init__(self, server):
+        self.transport = None
         self.server = server
 
     def connection_made(self, transport):
@@ -40,14 +67,14 @@ class AudioServerProtocol(asyncio.DatagramProtocol):
 
         if len(client_buffer) == total_packets:
             # one client's chunk
-            sorted_payloads = [self.server.audio_buffers[received_chunk_id][i] for i in range(1, total_packets + 1)]
+            sorted_payloads = [self.server.audio_buffers[addr][received_chunk_id][i] for i in
+                               range(1, total_packets + 1)]
             audio_data = b"".join(sorted_payloads)
-            del self.server.audio_buffers[received_chunk_id]
+            del self.server.audio_buffers[addr][received_chunk_id]
 
             # put client's chunk into queue
-            self.server.audio_data_queue.put_nowait((addr, audio_data))
-
-            del self.server.audio_buffers[addr][received_chunk_id]
+            self.server.clients_audio_data[addr] = audio_data
+            print("added")
 
     def error_received(self, exc):
         print(f"Error received: {exc}")
@@ -57,33 +84,30 @@ class AudioServerProtocol(asyncio.DatagramProtocol):
 
 
 class AudioServer:
-    def __init__(self, input_ip, input_port, output_port):
+    def __init__(self, server_ip, server_port, unicast_port):
         self.clients = None
-        self.input_ip = input_ip
-        self.input_port = input_port
-        self.output_ip = input_ip
-        self.output_port = output_port
+        self.server_ip = server_ip
+        self.server_port = server_port
+        self.unicast_port = unicast_port
         self.audio_buffers = defaultdict(dict)
-        self.audio_data_queue = asyncio.Queue()
+        self.clients_audio_data = {}
+
+        self.unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.stream_chunk_id = 0
+        self.sender_protocol = None
 
     async def send_mixed_audio(self):
         while True:
-            user_audio_data = {}
-
-            # 收集来自不同用户的完整音频数据
-            while not self.audio_data_queue.empty():
-                addr, audio_data = await self.audio_data_queue.get()
-                user_audio_data[addr] = audio_data
-
-            if not user_audio_data:
-                await asyncio.sleep(0.01)  # 避免空循环占用资源
+            if not self.clients_audio_data:
+                print("no")
                 continue
+
+            print("yes")
 
             # 对音频数据进行混音
             mixed_audio = None
-            for addr, audio_data in user_audio_data.items():
+            for addr, audio_data in self.clients_audio_data.items():
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 if mixed_audio is None:
                     mixed_audio = audio_array
@@ -91,6 +115,7 @@ class AudioServer:
                     mixed_audio = np.clip(mixed_audio + audio_array, -32768, 32767)
 
             if mixed_audio is None:
+                print("none")
                 continue
 
             # 将混音数据分片并发送给所有客户端
@@ -104,45 +129,30 @@ class AudioServer:
                 packet = header + payload
 
                 # 发送分片到所有客户端
-                for client_addr in self.clients:
-                    self.transport.sendto(packet, client_addr)
+                for addr in self.clients_audio_data.keys():
+                    target_address = (addr[0], self.unicast_port)
+                    self.unicast_socket.sendto(packet, target_address)
 
             # 更新 chunk_id（避免溢出）
             self.stream_chunk_id = (self.stream_chunk_id + 1) % 65536
-        # while True:
-        #     mixed_audio = None
-        #     user_audio_data = {}
-        #
-        #     while True:
-        #         try:
-        #             addr, audio_data = self.audio_data_queue.get_nowait()
-        #             user_audio_data[addr] = audio_data
-        #         except asyncio.QueueEmpty:
-        #             break
-        #
-        #     if not user_audio_data:
-        #         await asyncio.sleep(0.01)  # avoid CPU waste
-        #         continue
-        #
-        #     # mix chunks from all clients
-        #     for addr, audio_data in user_audio_data.items():
-        #         audio_array = np.frombuffer(audio_data, dtype=np.int16)
-        #         if mixed_audio is None:
-        #             mixed_audio = audio_array
-        #         else:
-        #             mixed_audio = np.clip(mixed_audio + audio_array, -32768, 32767)
-        #
-        #     mixed_audio_data = mixed_audio.astype(np.int16).tobytes()
-        #
-        #     self.transport.sendto(mixed_audio_data, (self.output_ip, self.output_port))
 
     async def run(self):
         loop = asyncio.get_running_loop()
         # 创建输入端口的 UDP 服务器端点
-        self.transport, protocol = await loop.create_datagram_endpoint(
+        transport, protocol = await loop.create_datagram_endpoint(
             lambda: AudioServerProtocol(self),
-            local_addr=(self.input_ip, self.input_port)
+            local_addr=(self.server_ip, self.server_port)
         )
+
+        # Create UDP sender for sending mixed audio
+        # _, self.sender_protocol = await loop.create_datagram_endpoint(
+        #     lambda: UDPSenderProtocol(),
+        #     remote_addr=None
+        # )
+
+        print("ok")
+
+        print("Audio server is running.")
 
         # 启动音频转发任务
         forward_task = asyncio.create_task(self.send_mixed_audio())
@@ -154,5 +164,5 @@ class AudioServer:
         except Exception as e:
             print(f"Error in audio server: {e}")
         finally:
-            self.transport.close()
+            transport.close()
             print("Audio server shutdown complete.")
