@@ -52,6 +52,7 @@ class ConferenceClient:
         self.conference_id = None  # 存储 conference_id
 
         self.text_port = None
+        self.server_text_port = None
 
         self.p2p_mode = False  # 标识是否为 P2P 模式
         self.p2p_socket = None  # 用于 P2P 数据传输的 UDP socket
@@ -326,6 +327,21 @@ class ConferenceClient:
                                     #     self.receive_video_task.cancel()
                                     self.send_video_task = asyncio.create_task(
                                         capture_and_send(loop, peer_ip, self.video_send_port))
+                                    print("started p2p mode")
+                                    # self.receive_video_task = asyncio.create_task(
+                                    #     receive_and_display(loop, self.video_recv_port))
+                            elif response.get('type') == 'stop_p2p':
+                                self.text_port = self.server_text_port
+                                self.video_server_ip = SERVER_IP
+                                self.audio_server_ip = SERVER_IP
+                                if self.video_running:
+                                    loop = asyncio.get_running_loop()
+                                    if self.send_video_task is not None:
+                                        self.send_video_task.cancel()
+                                    # if self.receive_video_task is not None:
+                                    #     self.receive_video_task.cancel()
+                                    self.send_video_task = asyncio.create_task(
+                                        capture_and_send(loop, SERVER_IP, self.video_send_port))
                                     print("started p2p mode")
                                     # self.receive_video_task = asyncio.create_task(
                                     #     receive_and_display(loop, self.video_recv_port))
