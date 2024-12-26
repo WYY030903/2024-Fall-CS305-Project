@@ -32,6 +32,9 @@ class ConferenceServer:
         self.conf_serve_port = None
         self.data_serve_ports = {}
 
+        self.conf_client_addresses = {}
+        self.conf_clients_reader_writer_pairs = {}
+
         self.conf_client_readers = set()
         self.conf_client_writers = set()
 
@@ -47,6 +50,7 @@ class ConferenceServer:
         self.mode = 'Client-Server'  # or 'P2P' if you want to support peer-to-peer conference mode
 
         self.text_serve_port = None
+        self.text_send_port = None
 
         self.video_send_port = None
         self.video_recv_port = None
@@ -81,10 +85,39 @@ class ConferenceServer:
         """
         self.conf_client_readers.add(reader)
         self.conf_client_writers.add(writer)
+        self.conf_clients_reader_writer_pairs[reader] = writer
+
         try:
             # 获取客户端的地址信息（用于调试或日志）
             client_address = writer.get_extra_info('peername')
             print(f"Connected to client {client_address}")
+            self.conf_client_addresses[reader] = client_address
+
+            if len(self.conf_client_readers) == 2:
+                print("starting p2p")
+                readers = list(self.conf_client_readers)
+                client1_address = self.conf_client_addresses[readers[0]]
+                client1_writer = self.conf_clients_reader_writer_pairs[readers[0]]
+                client2_address = self.conf_client_addresses[readers[1]]
+                client2_writer = self.conf_clients_reader_writer_pairs[readers[1]]
+                client_1_message = {
+                    "type": "p2p",
+                    "text_port": self.text_send_port,
+                    "peer_ip": client2_address[0],
+                    "video_send_port": self.video_send_port,
+                    "audio_send_port": self.audio_send_port,
+                }
+                client_2_message = {
+                    "type": "p2p",
+                    "text_port": self.text_send_port,
+                    "peer_ip": client1_address[0],
+                    "video_send_port": self.video_send_port,
+                    "audio_send_port": self.audio_send_port,
+                }
+                client1_writer.write(json.dumps(client_1_message).encode())
+                client2_writer.write(json.dumps(client_2_message).encode())
+                await client1_writer.drain()
+                await client2_writer.drain()
 
             while True:
                 # 接收客户端的请求

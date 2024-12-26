@@ -47,6 +47,8 @@ class ConferenceClient:
 
         self.conference_id = None  # 存储 conference_id
 
+        self.text_port = None
+
         self.p2p_mode = False  # 标识是否为 P2P 模式
         self.p2p_socket = None  # 用于 P2P 数据传输的 UDP socket
         self.p2p_target = None  # P2P 目标的 (IP, Port)
@@ -297,10 +299,29 @@ class ConferenceClient:
                     loop = asyncio.get_running_loop()
                     message = await loop.sock_recv(self.conf_socket, 1024)
                     if message:
-                        message = message.decode('utf-8')
-                        if message == 'cancel':
+                        decoded_message = message.decode('utf-8')
+                        if decoded_message == 'cancel':
                             self.close_conference()
                             print('Conference has been canceled. Quit.')
+                        else:
+                            response = json.loads(message.decode('utf-8'))
+                            if response.get('type') == 'p2p':
+                                peer_ip = response.get("peer_ip")
+                                self.text_port = response.get("text_port")
+                                self.video_send_port = response.get("video_send_port")
+                                self.audio_send_port = response.get("audio_send_port")
+
+                                if self.video_running:
+                                    loop = asyncio.get_running_loop()
+                                    if self.send_video_task is not None:
+                                        self.send_video_task.cancel()
+                                    # if self.receive_video_task is not None:
+                                    #     self.receive_video_task.cancel()
+                                    self.send_video_task = asyncio.create_task(
+                                        capture_and_send(loop, peer_ip, self.video_send_port))
+                                    # self.receive_video_task = asyncio.create_task(
+                                    #     receive_and_display(loop, self.video_recv_port))
+
                 except Exception as e:
                     print(f"Error receiving conf message: {e}")
                     break
