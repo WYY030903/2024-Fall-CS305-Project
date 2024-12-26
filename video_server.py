@@ -10,6 +10,7 @@ MAX_UDP_PACKET_SIZE = 1024  # UDP 最大数据包大小
 
 class VideoServerProtocol(asyncio.DatagramProtocol):
     def __init__(self, server):
+        self.transport = None
         self.server = server
 
     def connection_made(self, transport):
@@ -17,26 +18,26 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
         print("UDP server is up and listening.")
 
     def datagram_received(self, data, addr):
-        if len(data) < 4:
+        if len(data) < 5:
             print(f"Received invalid packet from {addr}")
             return  # 无效的数据包
 
         # 解析包头
-        header = data[:4]
-        payload = data[4:]
-        sequence_number, total_packets = struct.unpack("!HH", header)
+        header = data[:5]
+        payload = data[5:]
+        sequence_number, total_packets, received_frame_id = struct.unpack("!HH", header)
 
         # 获取或创建该客户端的缓冲区
-        client_buffer = self.server.video_buffers[addr].get(total_packets, {})
+        client_buffer = self.server.video_buffers[addr].get(received_frame_id, {})
         client_buffer[sequence_number] = payload
-        self.server.video_buffers[addr][total_packets] = client_buffer
+        self.server.video_buffers[addr][received_frame_id] = client_buffer
 
         # 检查是否接收到了所有分片
         if len(client_buffer) == total_packets:
             # 重组完整帧
             sorted_payloads = [
-                self.server.video_buffers[addr][total_packets][i]
-                for i in sorted(self.server.video_buffers[addr][total_packets].keys())
+                self.server.video_buffers[addr][received_frame_id][i]
+                for i in sorted(self.server.video_buffers[addr][received_frame_id].keys())
             ]
             frame_data = b"".join(sorted_payloads)
 
@@ -53,6 +54,7 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
             # 清空该帧的缓冲区
             del self.server.video_buffers[addr][total_packets]
 
+
 class VideoServer:
     def __init__(self, server_ip, server_port, unicast_port):
         self.server_ip = server_ip
@@ -66,6 +68,8 @@ class VideoServer:
 
         # 创建 UDP 发送套接字
         self.unicast_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+        self.stream_frame_id = 0
 
     def get_combined_frame(self, client_frames):
         """
@@ -107,7 +111,7 @@ class VideoServer:
         定期拼接所有客户端的最新帧，并发送回所有客户端。
         """
         while True:
-            await asyncio.sleep(1/20)  # 20 FPS
+            await asyncio.sleep(1 / 20)  # 20 FPS
 
             if not self.client_frames:
                 continue  # 没有可拼接的帧
@@ -138,8 +142,12 @@ class VideoServer:
                     packet_part = frame_bytes[start:end]
 
                     # 构建包头：序列号（1-based），总包数
-                    header = struct.pack("!HH", seq_num, total_packets)
+                    header = struct.pack("!HH", seq_num, total_packets, self.stream_frame_id)
                     self.unicast_socket.sendto(header + packet_part, target_address)
+
+            self.stream_frame_id += 1
+            if self.stream_frame_id > 3000:
+                self.stream_frame_id = 0
 
             # 在服务器端显示拼接后的帧
             # cv2.imshow("Combined Video Stream", combined_frame)

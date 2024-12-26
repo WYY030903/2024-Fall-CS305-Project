@@ -5,6 +5,8 @@ import numpy as np
 
 MAX_UDP_PACKET_SIZE = 4096  # UDP 最大数据包大小
 
+frame_id = 0
+
 class UDPSenderProtocol:
     def __init__(self, server_ip, server_port, frame_queue):
         self.server_ip = server_ip
@@ -31,11 +33,13 @@ class UDPSenderProtocol:
     def resume_writing(self):
         print("Flow control: resume writing")
 
+
 async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_target=None):
     """
     捕获视频帧并通过 UDP 发送到服务器。
     """
     # 创建一个队列用于传递帧
+    global frame_id
     frame_queue = asyncio.Queue(maxsize=10)
 
     # 启动视频捕获线程
@@ -63,7 +67,7 @@ async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_ta
                 asyncio.run_coroutine_threadsafe(frame_queue.put(frame_bytes), loop)
 
                 # 控制帧率
-                asyncio.run_coroutine_threadsafe(asyncio.sleep(1/20), loop)  # 20 FPS
+                asyncio.run_coroutine_threadsafe(asyncio.sleep(1 / 20), loop)  # 20 FPS
         finally:
             cap.release()
 
@@ -90,19 +94,23 @@ async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_ta
                 end = start + MAX_UDP_PACKET_SIZE
                 packet = frame_bytes[start:end]
 
-                # 构建包头：序列号（1-based），总包数
-                header = struct.pack("!HH", sequence_number, total_packets)
+                # 构建包头：序列号（1-based），总包数, frame_id
+                header = struct.pack("!HH", sequence_number, total_packets, frame_id)
                 if p2p_socket and p2p_target:
                     # 在 P2P 模式下直接发送数据
                     p2p_socket.sendto(header + packet, p2p_target)
                 else:
                     # 非 P2P 模式，发送到服务器
                     transport.sendto(header + packet)
+            frame_id = frame_id + 1
+            if frame_id > 3000:
+                frame_id = 0
     except Exception as e:
         print(f"Error occurred during video sending: {e}")
     finally:
         transport.close()
         print("Video sending stopped.")
+
 
 class UDPReceiverProtocol:
     def __init__(self, display_callback):
@@ -115,24 +123,24 @@ class UDPReceiverProtocol:
         print("Listening for video...")
 
     def datagram_received(self, data, addr):
-        if len(data) < 4:
+        if len(data) < 5:
             return  # 无效的数据包
 
-        header = data[:4]
-        payload = data[4:]
-        sequence_number, total_packets = struct.unpack("!HH", header)
+        header = data[:5]
+        payload = data[5:]
+        sequence_number, total_packets, received_frame_id = struct.unpack("!HH", header)
 
-        if total_packets not in self.video_buffer:
-            self.video_buffer[total_packets] = {}
+        if received_frame_id not in self.video_buffer:
+            self.video_buffer[received_frame_id] = {}
 
-        self.video_buffer[total_packets][sequence_number] = payload
+        self.video_buffer[received_frame_id][sequence_number] = payload
 
         # 检查是否接收到完整帧
-        if len(self.video_buffer[total_packets]) == total_packets:
+        if len(self.video_buffer[received_frame_id]) == total_packets:
             # 重组完整帧
-            sorted_payloads = [self.video_buffer[total_packets][i] for i in range(1, total_packets + 1)]
+            sorted_payloads = [self.video_buffer[received_frame_id][i] for i in range(1, total_packets + 1)]
             frame_data = b"".join(sorted_payloads)
-            del self.video_buffer[total_packets]
+            del self.video_buffer[received_frame_id]
 
             # 解码并显示帧
             frame_array = np.frombuffer(frame_data, dtype=np.uint8)
@@ -149,6 +157,7 @@ class UDPReceiverProtocol:
 
     def connection_lost(self, exc):
         print("UDP receiver connection closed")
+
 
 async def receive_and_display(loop, receive_port):
     """
