@@ -142,10 +142,10 @@ class VideoServer:
                     self.unicast_socket.sendto(header + packet_part, target_address)
 
             # 在服务器端显示拼接后的帧
-            cv2.imshow("Combined Video Stream", combined_frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("Shutting down server...")
-                break
+            # cv2.imshow("Combined Video Stream", combined_frame)
+            # if cv2.waitKey(1) & 0xFF == ord('q'):
+            #     print("Shutting down server...")
+            #     break
 
     async def run(self):
         loop = asyncio.get_running_loop()

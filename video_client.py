@@ -25,6 +25,12 @@ class UDPSenderProtocol:
     def connection_lost(self, exc):
         print("UDP sender connection closed")
 
+    def pause_writing(self):
+        print("Flow control: pause writing")
+
+    def resume_writing(self):
+        print("Flow control: resume writing")
+
 async def capture_and_send(loop, server_ip, server_port, p2p_socket=None, p2p_target=None):
     """
     捕获视频帧并通过 UDP 发送到服务器。
@@ -121,6 +127,7 @@ class UDPReceiverProtocol:
 
         self.video_buffer[total_packets][sequence_number] = payload
 
+        # 检查是否接收到完整帧
         if len(self.video_buffer[total_packets]) == total_packets:
             # 重组完整帧
             sorted_payloads = [self.video_buffer[total_packets][i] for i in range(1, total_packets + 1)]
@@ -132,6 +139,10 @@ class UDPReceiverProtocol:
             frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
             if frame is not None:
                 self.display_callback(frame)
+        else:
+            # 丢弃不完整帧
+            pass
+            # print(f"Incomplete frame received from {addr}: {len(self.video_buffer[total_packets])}/{total_packets}")
 
     def error_received(self, exc):
         print(f"Error received: {exc}")
@@ -144,7 +155,7 @@ async def receive_and_display(loop, receive_port):
     接收服务器返回的拼接视频帧并显示。
     """
     # 使用线程安全的队列来传递帧给显示部分
-    frame_queue = asyncio.Queue()
+    frame_queue = asyncio.Queue(maxsize=10)
 
     def display_frame(frame):
         # 将帧放入队列

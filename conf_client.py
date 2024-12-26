@@ -354,6 +354,7 @@ class ConferenceClient:
             self.send_video_task.cancel()
         if self.receive_video_task is not None:
             self.receive_video_task.cancel()
+        self.video_running = False
         if self.audio_send_task is not None:
             self.audio_send_task.cancel()
         if self.audio_receive_task is not None:
@@ -399,6 +400,11 @@ class ConferenceClient:
         if not self.video_running:
             print("Video is not running.")
             return
+
+        if self.send_video_task is not None:
+            self.send_video_task.cancel()
+        if self.receive_video_task is not None:
+            self.receive_video_task.cancel()
 
         self.video_running = False
 
