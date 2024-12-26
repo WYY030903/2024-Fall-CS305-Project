@@ -100,7 +100,7 @@ class AudioServer:
     async def send_mixed_audio(self):
         while True:
             if not self.clients_audio_data:
-                print("no")
+                # print("no")
                 continue
 
             print("yes")

@@ -104,20 +104,28 @@ class ConferenceServer:
                     "type": "p2p",
                     "text_port": self.text_send_port,
                     "peer_ip": client2_address[0],
-                    "video_send_port": self.video_send_port,
-                    "audio_send_port": self.audio_send_port,
+                    "video_send_port": self.video_recv_port,
+                    "audio_send_port": self.audio_recv_port
                 }
                 client_2_message = {
                     "type": "p2p",
                     "text_port": self.text_send_port,
                     "peer_ip": client1_address[0],
-                    "video_send_port": self.video_send_port,
-                    "audio_send_port": self.audio_send_port,
+                    "video_send_port": self.video_recv_port,
+                    "audio_send_port": self.audio_recv_port
                 }
                 client1_writer.write(json.dumps(client_1_message).encode())
                 client2_writer.write(json.dumps(client_2_message).encode())
                 await client1_writer.drain()
                 await client2_writer.drain()
+                print("sent p2p msgs")
+            else:
+                for writer in self.conf_client_writers:
+                    message = {
+                        "type": "stop_p2p"
+                    }
+                    writer.write(json.dumps(message).encode())
+                    await writer.drain()
 
             while True:
                 # 接收客户端的请求
@@ -130,36 +138,7 @@ class ConferenceServer:
                 message = data.decode()
                 if message == 'cancel':
                     await self.cancel_conference()
-                # print(f"Received from {client_address}: {message}")
-                #
-                # # 解析请求数据（假设是 JSON 格式）需要统一请求数据的格式
-                # import json
-                # try:
-                #     request = json.loads(message)
-                #     request_type = request.get("type")  # 请求类型
-                #     payload = request.get("data")  # 请求的具体数据
-                # except json.JSONDecodeError:
-                #     print("Invalid data format received.")
-                #     continue
-                #
-                # # 根据请求类型执行相应的操作
-                # if request_type == "send_message":
-                #     # 转发文本消息
-                #     await self.broadcast_message(writer, payload, "text")
-                # elif request_type == "send_video":
-                #     # 开启视频流的处理
-                #     print(f"Starting video stream for {client_address}.")
-                #     await self.handle_data(reader, writer, "video")
-                # elif request_type == "send_audio":
-                #     # 开启音频流的处理
-                #     print(f"Starting audio stream for {client_address}.")
-                #     await self.handle_data(reader, writer, "audio")
-                # elif request_type == "exit":
-                #     # 客户端退出会议
-                #     print(f"Client {client_address} has exited the meeting.")
-                #     break
-                # else:
-                #     print(f"Unknown request type: {request_type}")
+
         except Exception as e:
             print(f"Error handling client {client_address}: {e}")
         finally:
@@ -174,6 +153,40 @@ class ConferenceServer:
                 self.running = False
                 self.conf_server.close()
                 print("Server is shutting down...")
+
+            if len(self.conf_client_readers) == 2:
+                print("starting p2p")
+                readers = list(self.conf_client_readers)
+                client1_address = self.conf_client_addresses[readers[0]]
+                client1_writer = self.conf_clients_reader_writer_pairs[readers[0]]
+                client2_address = self.conf_client_addresses[readers[1]]
+                client2_writer = self.conf_clients_reader_writer_pairs[readers[1]]
+                client_1_message = {
+                    "type": "p2p",
+                    "text_port": self.text_send_port,
+                    "peer_ip": client2_address[0],
+                    "video_send_port": self.video_recv_port,
+                    "audio_send_port": self.audio_recv_port
+                }
+                client_2_message = {
+                    "type": "p2p",
+                    "text_port": self.text_send_port,
+                    "peer_ip": client1_address[0],
+                    "video_send_port": self.video_recv_port,
+                    "audio_send_port": self.audio_recv_port
+                }
+                client1_writer.write(json.dumps(client_1_message).encode())
+                client2_writer.write(json.dumps(client_2_message).encode())
+                await client1_writer.drain()
+                await client2_writer.drain()
+                print("sent p2p msgs")
+            else:
+                for writer in self.conf_client_writers:
+                    message = {
+                        "type": "stop_p2p"
+                    }
+                    writer.write(json.dumps(message).encode())
+                    await writer.drain()
             print(f"Connection to client {client_address} closed.")
 
     async def handle_text_client(self, reader, writer):
@@ -289,15 +302,15 @@ class ConferenceServer:
 
             # 启动音频服务器
             print(f"Audio ports are {self.audio_send_port, self.audio_recv_port}")
-            audio_server = AudioServer(SERVER_IP, self.audio_send_port, self.audio_recv_port)
-            audio_task = asyncio.create_task(audio_server.run())
+            # audio_server = AudioServer(SERVER_IP, self.audio_send_port, self.audio_recv_port)
+            # audio_task = asyncio.create_task(audio_server.run())
 
             # 启动所有服务器任务
             server_tasks = [
                 asyncio.create_task(conf_server.serve_forever()),  # 会议服务器
                 asyncio.create_task(text_server.serve_forever()),  # 文本消息服务器
                 video_task,  # 视频服务器
-                audio_task,  # 音频服务器
+                # audio_task,  # 音频服务器
             ]
 
             # 并行运行所有服务器任务
