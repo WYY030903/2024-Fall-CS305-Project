@@ -122,7 +122,9 @@ class ConferenceServer:
             else:
                 for writer in self.conf_client_writers:
                     message = {
-                        "type": "stop_p2p"
+                        "type": "stop_p2p",
+                        "video_send_port": self.video_send_port,
+                        "audio_send_port": self.audio_send_port
                     }
                     writer.write(json.dumps(message).encode())
                     await writer.drain()

@@ -334,6 +334,8 @@ class ConferenceClient:
                                 self.text_port = self.server_text_port
                                 self.video_server_ip = SERVER_IP
                                 self.audio_server_ip = SERVER_IP
+                                self.video_send_port = response.get("video_send_port")
+                                self.audio_send_port = response.get("audio_send_port")
                                 if self.video_running:
                                     loop = asyncio.get_running_loop()
                                     if self.send_video_task is not None:
