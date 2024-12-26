@@ -123,11 +123,11 @@ class UDPReceiverProtocol:
         print("Listening for video...")
 
     def datagram_received(self, data, addr):
-        if len(data) < 5:
+        if len(data) < 6:
             return  # 无效的数据包
 
-        header = data[:5]
-        payload = data[5:]
+        header = data[:6]
+        payload = data[6:]
         received_stream_frame_id, sequence_number, total_packets = struct.unpack("!HHH", header)
 
         if received_stream_frame_id not in self.video_buffer:

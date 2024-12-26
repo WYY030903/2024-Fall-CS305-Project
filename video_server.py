@@ -18,13 +18,13 @@ class VideoServerProtocol(asyncio.DatagramProtocol):
         print("UDP server is up and listening.")
 
     def datagram_received(self, data, addr):
-        if len(data) < 5:
+        if len(data) < 6:
             print(f"Received invalid packet from {addr}")
             return  # 无效的数据包
 
         # 解析包头
-        header = data[:5]
-        payload = data[5:]
+        header = data[:6]
+        payload = data[6:]
         received_frame_id, sequence_number, total_packets = struct.unpack("!HHH", header)
 
         # 获取或创建该客户端的缓冲区
