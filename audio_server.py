@@ -58,6 +58,7 @@ class AudioServerProtocol(asyncio.DatagramProtocol):
 
 class AudioServer:
     def __init__(self, input_ip, input_port, output_port):
+        self.clients = None
         self.input_ip = input_ip
         self.input_port = input_port
         self.output_ip = input_ip
@@ -69,21 +70,19 @@ class AudioServer:
 
     async def send_mixed_audio(self):
         while True:
-            mixed_audio = None
             user_audio_data = {}
 
-            while True:
-                try:
-                    addr, audio_data = self.audio_data_queue.get_nowait()
-                    user_audio_data[addr] = audio_data
-                except asyncio.QueueEmpty:
-                    break
+            # 收集来自不同用户的完整音频数据
+            while not self.audio_data_queue.empty():
+                addr, audio_data = await self.audio_data_queue.get()
+                user_audio_data[addr] = audio_data
 
             if not user_audio_data:
-                await asyncio.sleep(0.01)  # avoid CPU waste
+                await asyncio.sleep(0.01)  # 避免空循环占用资源
                 continue
 
-            # mix chunks from all clients
+            # 对音频数据进行混音
+            mixed_audio = None
             for addr, audio_data in user_audio_data.items():
                 audio_array = np.frombuffer(audio_data, dtype=np.int16)
                 if mixed_audio is None:
@@ -91,9 +90,51 @@ class AudioServer:
                 else:
                     mixed_audio = np.clip(mixed_audio + audio_array, -32768, 32767)
 
-            mixed_audio_data = mixed_audio.astype(np.int16).tobytes()
+            if mixed_audio is None:
+                continue
 
-            self.transport.sendto(mixed_audio_data, (self.output_ip, self.output_port))
+            # 将混音数据分片并发送给所有客户端
+            mixed_audio_data = mixed_audio.astype(np.int16).tobytes()
+            total_packets = (len(mixed_audio_data) + CHUNK_SIZE - 1) // CHUNK_SIZE
+
+            for i in range(total_packets):
+                # 提取分片数据
+                payload = mixed_audio_data[i * CHUNK_SIZE:(i + 1) * CHUNK_SIZE]
+                header = struct.pack("!HHH", self.stream_chunk_id, i + 1, total_packets)
+                packet = header + payload
+
+                # 发送分片到所有客户端
+                for client_addr in self.clients:
+                    self.transport.sendto(packet, client_addr)
+
+            # 更新 chunk_id（避免溢出）
+            self.stream_chunk_id = (self.stream_chunk_id + 1) % 65536
+        # while True:
+        #     mixed_audio = None
+        #     user_audio_data = {}
+        #
+        #     while True:
+        #         try:
+        #             addr, audio_data = self.audio_data_queue.get_nowait()
+        #             user_audio_data[addr] = audio_data
+        #         except asyncio.QueueEmpty:
+        #             break
+        #
+        #     if not user_audio_data:
+        #         await asyncio.sleep(0.01)  # avoid CPU waste
+        #         continue
+        #
+        #     # mix chunks from all clients
+        #     for addr, audio_data in user_audio_data.items():
+        #         audio_array = np.frombuffer(audio_data, dtype=np.int16)
+        #         if mixed_audio is None:
+        #             mixed_audio = audio_array
+        #         else:
+        #             mixed_audio = np.clip(mixed_audio + audio_array, -32768, 32767)
+        #
+        #     mixed_audio_data = mixed_audio.astype(np.int16).tobytes()
+        #
+        #     self.transport.sendto(mixed_audio_data, (self.output_ip, self.output_port))
 
     async def run(self):
         loop = asyncio.get_running_loop()

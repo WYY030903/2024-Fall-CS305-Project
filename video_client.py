@@ -7,6 +7,7 @@ MAX_UDP_PACKET_SIZE = 4096  # UDP 最大数据包大小
 
 frame_id = 0
 
+
 class UDPSenderProtocol:
     def __init__(self, server_ip, server_port, frame_queue):
         self.server_ip = server_ip

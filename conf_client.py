@@ -88,6 +88,10 @@ class ConferenceClient:
         """
         Create a conference: send create-conference request to server and obtain necessary data.
         """
+        if self.on_meeting:
+            print("In meeting! please leave ongoing meeting first.")
+            return
+
         request = {
             "type": "create_conference",
             "data": {}

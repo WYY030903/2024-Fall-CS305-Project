@@ -1,7 +1,6 @@
 import asyncio
 import pyaudio
 import numpy as np
-import socket
 import struct
 
 MAX_UDP_PACKET_SIZE = 1024  # UDP最大数据包大小
@@ -11,6 +10,7 @@ RATE = 16000  # 采样率：16kHz
 CHUNK_SIZE = 1024  # 每次读取的音频块大小
 
 chunk_id = 0
+
 
 class UDPSenderProtocol:
     def __init__(self, server_ip, server_port, audio_queue):
@@ -40,6 +40,7 @@ class UDPSenderProtocol:
 
 
 async def capture_and_send_audio(loop, server_ip, server_port):
+    print(server_ip, server_port)
     audio_queue = asyncio.Queue()
 
     # 初始化 PyAudio 捕获音频
@@ -51,12 +52,13 @@ async def capture_and_send_audio(loop, server_ip, server_port):
                     frames_per_buffer=CHUNK_SIZE)
 
     global chunk_id
+
     def capture_audio():
         try:
             while True:
                 # 从麦克风捕获音频数据
-                audio_data = stream.read(CHUNK_SIZE)
-                audio_queue.put_nowait(audio_data)
+                audio_data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                asyncio.run_coroutine_threadsafe(audio_queue.put(audio_data), loop)
         except Exception as e:
             print(f"Error capturing audio: {e}")
 
@@ -65,7 +67,6 @@ async def capture_and_send_audio(loop, server_ip, server_port):
     capture_thread = threading.Thread(target=capture_audio, daemon=True)
     capture_thread.start()
 
-    # 创建 UDP 发送端点
     transport, protocol = await loop.create_datagram_endpoint(
         lambda: UDPSenderProtocol(server_ip, server_port, audio_queue),
         remote_addr=(server_ip, server_port)
@@ -101,8 +102,8 @@ async def capture_and_send_audio(loop, server_ip, server_port):
 
 
 class UDPReceiverProtocol:
-    def __init__(self, audio_queue):
-        self.audio_queue = audio_queue
+    def __init__(self, audio_stream):
+        self.audio_stream = audio_stream
         self.transport = None
         self.audio_buffer = {}
 
@@ -116,21 +117,24 @@ class UDPReceiverProtocol:
 
         header = data[:6]
         payload = data[6:]
-        received_chunk_id, sequence_number, total_packets = struct.unpack("!HHH", header)
+        received_stream_chunk_id, sequence_number, total_packets = struct.unpack("!HHH", header)
 
-        if received_chunk_id not in self.audio_buffer:
-            self.audio_buffer[received_chunk_id] = {}
+        if received_stream_chunk_id not in self.audio_buffer:
+            self.audio_buffer[received_stream_chunk_id] = {}
 
-        self.audio_buffer[received_chunk_id][sequence_number] = payload
+        self.audio_buffer[received_stream_chunk_id][sequence_number] = payload
 
-        if len(self.audio_buffer[received_chunk_id]) == total_packets:
+        if len(self.audio_buffer[received_stream_chunk_id]) == total_packets:
             # 重组完整音频数据
-            sorted_payloads = [self.audio_buffer[received_chunk_id][i] for i in range(1, total_packets + 1)]
+            sorted_payloads = [self.audio_buffer[received_stream_chunk_id][i] for i in range(1, total_packets + 1)]
             audio_data = b"".join(sorted_payloads)
-            del self.audio_buffer[received_chunk_id]
 
             # 将音频数据放入队列
-            self.audio_queue.put_nowait(audio_data)
+            # self.audio_stream.put_nowait(audio_data)
+
+            del self.audio_buffer[received_stream_chunk_id]
+
+            self.audio_stream.write(audio_data)
 
     def error_received(self, exc):
         print(f"Error received: {exc}")
@@ -139,35 +143,30 @@ class UDPReceiverProtocol:
         print("UDP receiver connection closed")
 
 
-async def receive_and_play_audio(loop, local_port):
+async def receive_and_play_audio(loop, receive_port):
     audio_player = pyaudio.PyAudio()
-    stream = audio_player.open(format=AUDIO_FORMAT,
-                               channels=CHANNELS,
-                               rate=RATE,
-                               output=True)
+    audio_stream = audio_player.open(
+        format=AUDIO_FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        output=True,
+        frames_per_buffer=CHUNK_SIZE
+    )
 
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    client_socket.bind(("0.0.0.0", local_port))
+    transport, protocol = await loop.create_datagram_endpoint(
+        lambda: UDPReceiverProtocol(audio_stream),
+        local_addr=("0.0.0.0", receive_port),
+    )
 
-    # print("waiting for audio data...")
-
-    try:
-        while True:
-            data, addr = client_socket.recvfrom(4096)
-
-            if not data:
-                continue
-
-            stream.write(data)
-
-    except KeyboardInterrupt:
-        print("stop receiving audio")
-
-    finally:
-        stream.stop_stream()
-        stream.close()
-        audio_player.terminate()
-        client_socket.close()
+    # try:
+    #     # 保持客户端运行
+    #     await asyncio.sleep(3600)  # 运行 1 小时
+    # except KeyboardInterrupt:
+    #     print("Client shutting down...")
+    # finally:
+    #     transport.close()
+    #     audio_stream.close()
+    #     audio_player.terminate()
 
     # audio_queue = asyncio.Queue()
     #
@@ -204,7 +203,6 @@ async def receive_and_play_audio(loop, local_port):
     #
     # transport.close()
     # print("Stopped receiving and playing audio.")
-
 
 # async def main():
 #     server_ip = "127.0.0.1"  # 服务器 IP
