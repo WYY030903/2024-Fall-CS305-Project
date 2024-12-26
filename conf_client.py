@@ -23,6 +23,10 @@ class ConferenceClient:
         self.share_data = {}
         self.video_running = False
         self.audio_running = False
+
+        self.video_server_ip = SERVER_IP
+        self.audio_server_ip = SERVER_IP
+
         self.video_send_port = None
         self.video_recv_port = None
         self.audio_send_port = None
@@ -306,8 +310,11 @@ class ConferenceClient:
                         else:
                             response = json.loads(message.decode('utf-8'))
                             if response.get('type') == 'p2p':
+                                print("starting p2p mode")
                                 peer_ip = response.get("peer_ip")
                                 self.text_port = response.get("text_port")
+                                self.video_server_ip = peer_ip
+                                self.audio_server_ip = peer_ip
                                 self.video_send_port = response.get("video_send_port")
                                 self.audio_send_port = response.get("audio_send_port")
 
@@ -319,6 +326,7 @@ class ConferenceClient:
                                     #     self.receive_video_task.cancel()
                                     self.send_video_task = asyncio.create_task(
                                         capture_and_send(loop, peer_ip, self.video_send_port))
+                                    print("started p2p mode")
                                     # self.receive_video_task = asyncio.create_task(
                                     #     receive_and_display(loop, self.video_recv_port))
 
@@ -414,7 +422,7 @@ class ConferenceClient:
 
         self.video_running = True
         loop = asyncio.get_running_loop()
-        self.send_video_task = asyncio.create_task(capture_and_send(loop, SERVER_IP, self.video_send_port))
+        self.send_video_task = asyncio.create_task(capture_and_send(loop, self.video_server_ip, self.video_send_port))
         self.receive_video_task = asyncio.create_task(receive_and_display(loop, self.video_recv_port))
         print("Video started.")
 
@@ -461,7 +469,7 @@ class ConferenceClient:
 
         self.audio_running = True
         loop = asyncio.get_running_loop()
-        self.audio_send_task = asyncio.create_task(capture_and_send_audio(loop, SERVER_IP, self.audio_send_port))
+        self.audio_send_task = asyncio.create_task(capture_and_send_audio(loop, self.audio_server_ip, self.audio_send_port))
         self.audio_receive_task = asyncio.create_task(receive_and_play_audio(loop, self.audio_recv_port))
         print("Audio started.")
 
