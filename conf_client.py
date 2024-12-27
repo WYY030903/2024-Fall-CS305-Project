@@ -19,7 +19,7 @@ class ConferenceClient:
         self.on_meeting = False
         self.is_manager = False
         self.conns = {'video_socket': None, 'audio_socket': None}
-        self.support_data_types = ['text', 'audio', 'video']
+        self.support_data_types = ['text', 'audio', 'video', 'video-cs']
         self.share_data = {}
         self.video_running = False
         self.audio_running = False
@@ -57,6 +57,8 @@ class ConferenceClient:
         self.p2p_mode = False  # 标识是否为 P2P 模式
         self.p2p_socket = None  # 用于 P2P 数据传输的 UDP socket
         self.p2p_target = None  # P2P 目标的 (IP, Port)
+
+        self.video_send_server_port = None
 
     def set_username(self):
         self.username = input("Enter your username: ")
@@ -157,6 +159,7 @@ class ConferenceClient:
             self.conference_id = response.get("conference_id")
             conf_port = response.get('conf_port')
             text_port = response.get("text_port")
+            self.video_send_server_port = response.get("video_send_port")
             self.video_send_port = response.get("video_send_port")
             self.video_recv_port = response.get("video_recv_port")
             self.audio_send_port = response.get("audio_send_port")
@@ -253,6 +256,11 @@ class ConferenceClient:
                 await self.stop_video()
             else:
                 await self.start_video()
+        if data_type == 'video-cs':
+            if self.video_running:
+                await self.stop_video()
+            else:
+                await self.start_video(cs=True)
         elif data_type == 'audio':
             if self.audio_running:
                 await self.stop_audio()
@@ -310,7 +318,8 @@ class ConferenceClient:
                             print('Conference has been canceled. Quit.')
                         else:
                             response = json.loads(message.decode('utf-8'))
-                            if response.get('type') == 'p2p':
+                            if response.get('type') == 'p2p' and not self.p2p_mode:
+                                self.p2p_mode = True
                                 print("starting p2p mode")
                                 peer_ip = response.get("peer_ip")
                                 self.text_port = response.get("text_port")
@@ -330,7 +339,8 @@ class ConferenceClient:
                                     print("started p2p mode")
                                     # self.receive_video_task = asyncio.create_task(
                                     #     receive_and_display(loop, self.video_recv_port))
-                            elif response.get('type') == 'stop_p2p':
+                            elif response.get('type') == 'stop_p2p' and self.p2p_mode:
+                                self.p2p_mode = False
                                 self.text_port = self.server_text_port
                                 self.video_server_ip = SERVER_IP
                                 self.audio_server_ip = SERVER_IP
@@ -430,7 +440,7 @@ class ConferenceClient:
     def read_console_input(self):
         return input(f'({self.status}) Please enter an operation (enter "?" to help): ').strip().lower()
     
-    async def start_video(self):
+    async def start_video(self, cs=False):
         """
         启动视频功能：发送和接收任务。
         """
@@ -440,7 +450,10 @@ class ConferenceClient:
 
         self.video_running = True
         loop = asyncio.get_running_loop()
-        self.send_video_task = asyncio.create_task(capture_and_send(loop, self.video_server_ip, self.video_send_port))
+        if cs:
+            self.send_video_task = asyncio.create_task(capture_and_send(loop, SERVER_IP, self.video_send_server_port))
+        else:
+            self.send_video_task = asyncio.create_task(capture_and_send(loop, self.video_server_ip, self.video_send_port))
         self.receive_video_task = asyncio.create_task(receive_and_display(loop, self.video_recv_port))
         print("Video started.")
 
