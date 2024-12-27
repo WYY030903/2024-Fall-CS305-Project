@@ -156,7 +156,7 @@ class ConferenceServer:
                 self.conf_server.close()
                 print("Server is shutting down...")
 
-            if len(self.conf_client_readers) == 2:
+            elif len(self.conf_client_readers) == 2:
                 print("starting p2p")
                 readers = list(self.conf_client_readers)
                 client1_address = self.conf_client_addresses[readers[0]]
@@ -185,7 +185,9 @@ class ConferenceServer:
             else:
                 for writer in self.conf_client_writers:
                     message = {
-                        "type": "stop_p2p"
+                        "type": "stop_p2p",
+                        "video_send_port": self.video_send_port,
+                        "audio_send_port": self.audio_send_port
                     }
                     writer.write(json.dumps(message).encode())
                     await writer.drain()
